@@ -6,7 +6,7 @@
 
 ### 文案文件
 
-- `marketing/google-play-listing-zh-CN.md`
+- `marketing/china-android-listing-zh-CN.md`
 - `marketing/privacy-policy.md`
 - `marketing/store-assets-checklist.md`
 
@@ -26,17 +26,17 @@
 
 ---
 
-## 2. 建议用于 Google Play 的素材对应关系
+## 2. 建议用于中国安卓市场的素材对应关系
 
 ### 应用图标
 
 - 来源：`game_app/assets/branding/app_icon.png`
 - 说明：已用于生成 Android Launcher Icon
 
-### Feature Graphic
+### 横幅/展示宣传图
 
 - 建议文件：`marketing/assets/feature/feature-graphic.png`
-- 推荐用途：Google Play Feature Graphic
+- 推荐用途：华为/小米/OPPO/vivo/应用宝等市场的展示横幅、宣传图参考素材
 
 ### 商店截图
 
