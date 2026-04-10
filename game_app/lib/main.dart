@@ -22,7 +22,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: '2048 Solo',
+      title: _GameBrand.appName,
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         useMaterial3: true,
@@ -49,7 +49,154 @@ class _TileAnimationData {
 class _GameBrand {
   static const appName = '2048 Solo';
   static const tagline = '离线也能玩的数字合成小游戏';
-  static const version = 'Build 1.2';
+  static const version = 'Build 1.3 Showcase';
+  static const storeHeadline = '更像商店成品的单机益智体验';
+}
+
+class _AchievementDefinition {
+  const _AchievementDefinition({
+    required this.key,
+    required this.label,
+    required this.requirement,
+    required this.icon,
+  });
+
+  final String key;
+  final String label;
+  final int requirement;
+  final IconData icon;
+}
+
+const List<_AchievementDefinition> _achievementDefinitions = [
+  _AchievementDefinition(
+    key: 'tile_128',
+    label: '合成 128',
+    requirement: 128,
+    icon: Icons.looks_one_rounded,
+  ),
+  _AchievementDefinition(
+    key: 'tile_256',
+    label: '合成 256',
+    requirement: 256,
+    icon: Icons.looks_two_rounded,
+  ),
+  _AchievementDefinition(
+    key: 'tile_512',
+    label: '合成 512',
+    requirement: 512,
+    icon: Icons.looks_3_rounded,
+  ),
+  _AchievementDefinition(
+    key: 'tile_1024',
+    label: '合成 1024',
+    requirement: 1024,
+    icon: Icons.bolt_rounded,
+  ),
+  _AchievementDefinition(
+    key: 'tile_2048',
+    label: '合成 2048',
+    requirement: 2048,
+    icon: Icons.emoji_events_rounded,
+  ),
+];
+
+class _PlayerStats {
+  const _PlayerStats({
+    required this.totalGames,
+    required this.totalMoves,
+    required this.totalScore,
+    required this.bestTile,
+    required this.achievements,
+  });
+
+  final int totalGames;
+  final int totalMoves;
+  final int totalScore;
+  final int bestTile;
+  final Set<String> achievements;
+
+  _PlayerStats copyWith({
+    int? totalGames,
+    int? totalMoves,
+    int? totalScore,
+    int? bestTile,
+    Set<String>? achievements,
+  }) {
+    return _PlayerStats(
+      totalGames: totalGames ?? this.totalGames,
+      totalMoves: totalMoves ?? this.totalMoves,
+      totalScore: totalScore ?? this.totalScore,
+      bestTile: bestTile ?? this.bestTile,
+      achievements: achievements ?? this.achievements,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'totalGames': totalGames,
+      'totalMoves': totalMoves,
+      'totalScore': totalScore,
+      'bestTile': bestTile,
+      'achievements': achievements.toList(),
+    };
+  }
+
+  factory _PlayerStats.fromJson(Map<String, dynamic> json) {
+    final rawAchievements = json['achievements'];
+    final achievements = <String>{};
+    if (rawAchievements is List) {
+      for (final item in rawAchievements) {
+        if (item is String) {
+          achievements.add(item);
+        }
+      }
+    }
+
+    return _PlayerStats(
+      totalGames: json['totalGames'] as int? ?? 0,
+      totalMoves: json['totalMoves'] as int? ?? 0,
+      totalScore: json['totalScore'] as int? ?? 0,
+      bestTile: json['bestTile'] as int? ?? 0,
+      achievements: achievements,
+    );
+  }
+
+  static const empty = _PlayerStats(
+    totalGames: 0,
+    totalMoves: 0,
+    totalScore: 0,
+    bestTile: 0,
+    achievements: <String>{},
+  );
+}
+
+class _AchievementUnlock {
+  const _AchievementUnlock({required this.definition, required this.isNew});
+
+  final _AchievementDefinition definition;
+  final bool isNew;
+}
+
+class _GameResultSummary {
+  const _GameResultSummary({
+    required this.title,
+    required this.message,
+    required this.score,
+    required this.bestScore,
+    required this.highestTile,
+    required this.moveCount,
+    required this.isWin,
+    required this.achievements,
+  });
+
+  final String title;
+  final String message;
+  final int score;
+  final int bestScore;
+  final int highestTile;
+  final int moveCount;
+  final bool isWin;
+  final List<_AchievementUnlock> achievements;
 }
 
 class GamePage extends StatefulWidget {
@@ -67,12 +214,14 @@ class _GamePageState extends State<GamePage> {
   static const _soundEnabledKey = 'sound_enabled';
   static const _hapticsEnabledKey = 'haptics_enabled';
   static const _onboardingSeenKey = 'onboarding_seen_v1';
+  static const _statsKey = 'player_stats_v1';
 
   late final TileGame _game;
   late final SoundController _soundController;
   late int _bestScore;
   late bool _soundEnabled;
   late bool _hapticsEnabled;
+  late _PlayerStats _stats;
 
   bool _wonShown = false;
   int _moveCount = 0;
@@ -88,6 +237,7 @@ class _GamePageState extends State<GamePage> {
     _bestScore = widget.preferences.getInt(_bestScoreKey) ?? 0;
     _soundEnabled = widget.preferences.getBool(_soundEnabledKey) ?? true;
     _hapticsEnabled = widget.preferences.getBool(_hapticsEnabledKey) ?? true;
+    _stats = _loadStats();
     _soundController = SoundController();
     unawaited(_soundController.setEnabled(_soundEnabled));
     _game = _loadGame();
@@ -119,6 +269,52 @@ class _GamePageState extends State<GamePage> {
       return game;
     } catch (_) {
       return TileGame();
+    }
+  }
+
+  _PlayerStats _loadStats() {
+    final encoded = widget.preferences.getString(_statsKey);
+    if (encoded == null) {
+      return _PlayerStats.empty;
+    }
+
+    try {
+      final decoded = jsonDecode(encoded);
+      if (decoded is! Map<String, dynamic>) {
+        return _PlayerStats.empty;
+      }
+      return _PlayerStats.fromJson(decoded);
+    } catch (_) {
+      return _PlayerStats.empty;
+    }
+  }
+
+  Future<void> _persistGame() {
+    return widget.preferences.setString(
+      _savedGameKey,
+      jsonEncode(_game.toJson()),
+    );
+  }
+
+  Future<void> _persistBestScore() {
+    return widget.preferences.setInt(_bestScoreKey, _bestScore);
+  }
+
+  Future<void> _persistSoundSetting() {
+    return widget.preferences.setBool(_soundEnabledKey, _soundEnabled);
+  }
+
+  Future<void> _persistHapticsSetting() {
+    return widget.preferences.setBool(_hapticsEnabledKey, _hapticsEnabled);
+  }
+
+  Future<void> _persistStats() {
+    return widget.preferences.setString(_statsKey, jsonEncode(_stats.toJson()));
+  }
+
+  Future<void> _maybeHaptic(Future<void> Function() callback) async {
+    if (_hapticsEnabled) {
+      await callback();
     }
   }
 
@@ -164,31 +360,6 @@ class _GamePageState extends State<GamePage> {
     return _TileAnimationData(kind: kind, tick: _animationTick);
   }
 
-  Future<void> _persistGame() async {
-    await widget.preferences.setString(
-      _savedGameKey,
-      jsonEncode(_game.toJson()),
-    );
-  }
-
-  Future<void> _persistBestScore() {
-    return widget.preferences.setInt(_bestScoreKey, _bestScore);
-  }
-
-  Future<void> _persistSoundSetting() {
-    return widget.preferences.setBool(_soundEnabledKey, _soundEnabled);
-  }
-
-  Future<void> _persistHapticsSetting() {
-    return widget.preferences.setBool(_hapticsEnabledKey, _hapticsEnabled);
-  }
-
-  Future<void> _maybeHaptic(Future<void> Function() callback) async {
-    if (_hapticsEnabled) {
-      await callback();
-    }
-  }
-
   Future<void> _toggleSound() async {
     await _maybeHaptic(HapticFeedback.selectionClick);
     final nextEnabled = !_soundEnabled;
@@ -204,6 +375,7 @@ class _GamePageState extends State<GamePage> {
 
   Future<void> _restart() async {
     await _maybeHaptic(HapticFeedback.mediumImpact);
+    _recordCompletedGame();
     _game.reset();
     setState(() {
       _wonShown = false;
@@ -266,19 +438,25 @@ class _GamePageState extends State<GamePage> {
       _tileAnimations = _buildTileAnimations(previousSnapshot, currentSnapshot);
     });
 
+    final unlocked = await _updateStatsForCurrentProgress();
+    if (unlocked.isNotEmpty && mounted) {
+      _showToast('解锁成就：${unlocked.first.definition.label}');
+    }
+
     if (_game.hasWon && !_wonShown) {
       _wonShown = true;
       unawaited(_soundController.playWin());
-      await _showGameDialog(
-        title: '你赢了！',
-        message: '已经合成到 2048，是否继续冲击更高分？',
-        primaryLabel: '继续挑战',
-        onPrimary: () => Navigator.of(context).pop(),
-        secondaryLabel: '重新开始',
-        onSecondary: () {
-          Navigator.of(context).pop();
-          _restart();
-        },
+      await _showResultSheet(
+        _GameResultSummary(
+          title: '你赢了！',
+          message: '已经成功合成到 2048，继续挑战更高分吧。',
+          score: _game.score,
+          bestScore: _bestScore,
+          highestTile: _game.highestTile,
+          moveCount: _moveCount,
+          isWin: true,
+          achievements: unlocked,
+        ),
       );
       return;
     }
@@ -286,19 +464,61 @@ class _GamePageState extends State<GamePage> {
     if (_game.isGameOver) {
       await _maybeHaptic(HapticFeedback.heavyImpact);
       unawaited(_soundController.playLose());
-      await _showGameDialog(
-        title: '游戏结束',
-        message: '当前棋盘已无可移动空间，是否马上再来一局？',
-        primaryLabel: '重新开始',
-        onPrimary: () {
-          Navigator.of(context).pop();
-          _restart();
-        },
+      _recordCompletedGame();
+      await _showResultSheet(
+        _GameResultSummary(
+          title: '游戏结束',
+          message: '当前棋盘已无可移动空间，准备再来一局吗？',
+          score: _game.score,
+          bestScore: _bestScore,
+          highestTile: _game.highestTile,
+          moveCount: _moveCount,
+          isWin: false,
+          achievements: unlocked,
+        ),
       );
       return;
     }
 
     unawaited(_soundController.playMove(merged: result.gainedScore > 0));
+  }
+
+  Future<List<_AchievementUnlock>> _updateStatsForCurrentProgress() async {
+    final achievements = Set<String>.from(_stats.achievements);
+    final unlocked = <_AchievementUnlock>[];
+
+    for (final definition in _achievementDefinitions) {
+      if (_game.highestTile >= definition.requirement &&
+          !achievements.contains(definition.key)) {
+        achievements.add(definition.key);
+        unlocked.add(_AchievementUnlock(definition: definition, isNew: true));
+      }
+    }
+
+    _stats = _stats.copyWith(
+      bestTile: _game.highestTile > _stats.bestTile
+          ? _game.highestTile
+          : _stats.bestTile,
+      achievements: achievements,
+    );
+    await _persistStats();
+    return unlocked;
+  }
+
+  void _recordCompletedGame() {
+    if (_game.isFreshGame) {
+      return;
+    }
+
+    _stats = _stats.copyWith(
+      totalGames: _stats.totalGames + 1,
+      totalMoves: _stats.totalMoves + _moveCount,
+      totalScore: _stats.totalScore + _game.score,
+      bestTile: _game.highestTile > _stats.bestTile
+          ? _game.highestTile
+          : _stats.bestTile,
+    );
+    unawaited(_persistStats());
   }
 
   Future<void> _maybeShowOnboarding() async {
@@ -358,7 +578,7 @@ class _GamePageState extends State<GamePage> {
                       style: TextStyle(color: Colors.white),
                     ),
                     content: const Text(
-                      '这会清空当前棋盘、最高分和首次引导记录，且无法撤回。',
+                      '这会清空当前棋盘、最高分、统计和首次引导记录，且无法撤回。',
                       style: TextStyle(color: Colors.white70, height: 1.5),
                     ),
                     actions: [
@@ -382,11 +602,13 @@ class _GamePageState extends State<GamePage> {
               await widget.preferences.remove(_savedGameKey);
               await widget.preferences.remove(_bestScoreKey);
               await widget.preferences.remove(_onboardingSeenKey);
+              await widget.preferences.remove(_statsKey);
               _bestScore = 0;
+              _stats = _PlayerStats.empty;
               await _restart();
               if (mounted) {
                 navigator.pop();
-                _showToast('本地进度已清除');
+                _showToast('本地进度与统计已清除');
               }
             }
 
@@ -412,6 +634,24 @@ class _GamePageState extends State<GamePage> {
     );
   }
 
+  Future<void> _showResultSheet(_GameResultSummary summary) {
+    return showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+        return _ResultSheet(
+          summary: summary,
+          onRestart: () {
+            Navigator.of(context).pop();
+            _restart();
+          },
+          onContinue: summary.isWin ? () => Navigator.of(context).pop() : null,
+        );
+      },
+    );
+  }
+
   void _showToast(String text) {
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
@@ -422,35 +662,6 @@ class _GamePageState extends State<GamePage> {
           duration: const Duration(seconds: 2),
         ),
       );
-  }
-
-  Future<void> _showGameDialog({
-    required String title,
-    required String message,
-    required String primaryLabel,
-    required VoidCallback onPrimary,
-    String? secondaryLabel,
-    VoidCallback? onSecondary,
-  }) {
-    return showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) {
-        return AlertDialog(
-          backgroundColor: const Color(0xFF172033),
-          title: Text(title, style: const TextStyle(color: Colors.white)),
-          content: Text(
-            message,
-            style: const TextStyle(color: Colors.white70, height: 1.5),
-          ),
-          actions: [
-            if (secondaryLabel != null && onSecondary != null)
-              TextButton(onPressed: onSecondary, child: Text(secondaryLabel)),
-            FilledButton(onPressed: onPrimary, child: Text(primaryLabel)),
-          ],
-        );
-      },
-    );
   }
 
   @override
@@ -485,133 +696,142 @@ class _GamePageState extends State<GamePage> {
           child: SafeArea(
             child: Center(
               child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 560),
+                constraints: const BoxConstraints(maxWidth: 620),
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Expanded(child: _TitlePanel()),
-                          const SizedBox(width: 12),
-                          Column(
-                            children: [
-                              _MiniActionButton(
-                                icon: Icons.settings_rounded,
-                                label: '设置',
-                                onPressed: _openSettings,
+                  child: SingleChildScrollView(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(
+                              child: _TitlePanel(
+                                bestScore: _bestScore,
+                                totalGames: _stats.totalGames,
                               ),
-                              const SizedBox(height: 10),
-                              _MiniActionButton(
-                                icon: _soundEnabled
-                                    ? Icons.volume_up_rounded
-                                    : Icons.volume_off_rounded,
-                                label: _soundEnabled ? '声音开' : '声音关',
-                                highlighted: _soundEnabled,
-                                onPressed: _toggleSound,
-                              ),
-                              const SizedBox(height: 10),
-                              _MiniActionButton(
-                                icon: Icons.undo_rounded,
-                                label: '撤销',
-                                highlighted: _lastSnapshot != null,
-                                onPressed: _undoMove,
-                              ),
-                              const SizedBox(height: 10),
-                              _MiniActionButton(
-                                icon: Icons.refresh_rounded,
-                                label: '重开',
-                                onPressed: _restart,
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 16),
-                      Wrap(
-                        spacing: 12,
-                        runSpacing: 12,
-                        children: [
-                          _ScoreCard(
-                            label: '当前分数',
-                            value: _game.score,
-                            accent: const Color(0xFFF59E0B),
-                          ),
-                          _ScoreCard(
-                            label: '最高分',
-                            value: _bestScore,
-                            accent: const Color(0xFF38BDF8),
-                          ),
-                          _ScoreCard(
-                            label: '最大方块',
-                            value: _game.highestTile,
-                            accent: const Color(0xFF34D399),
-                          ),
-                          _ScoreCard(
-                            label: '步数',
-                            value: _moveCount,
-                            accent: const Color(0xFFFB7185),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 16),
-                      _InfoBanner(
-                        lastMoveGain: _lastMoveGain,
-                        statusLabel: statusLabel,
-                        canUndo: _lastSnapshot != null,
-                        soundEnabled: _soundEnabled,
-                        hapticsEnabled: _hapticsEnabled,
-                      ),
-                      const SizedBox(height: 18),
-                      Expanded(
-                        child: Center(
-                          child: AspectRatio(
-                            aspectRatio: 1,
-                            child: Container(
-                              padding: const EdgeInsets.all(12),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFF1A2438),
-                                borderRadius: BorderRadius.circular(24),
-                                border: Border.all(
-                                  color: Colors.white.withValues(alpha: 0.05),
+                            ),
+                            const SizedBox(width: 12),
+                            Column(
+                              children: [
+                                _MiniActionButton(
+                                  icon: Icons.settings_rounded,
+                                  label: '设置',
+                                  onPressed: _openSettings,
                                 ),
-                                boxShadow: const [
-                                  BoxShadow(
-                                    color: Color(0x55000000),
-                                    blurRadius: 24,
-                                    offset: Offset(0, 16),
+                                const SizedBox(height: 10),
+                                _MiniActionButton(
+                                  icon: _soundEnabled
+                                      ? Icons.volume_up_rounded
+                                      : Icons.volume_off_rounded,
+                                  label: _soundEnabled ? '声音开' : '声音关',
+                                  highlighted: _soundEnabled,
+                                  onPressed: _toggleSound,
+                                ),
+                                const SizedBox(height: 10),
+                                _MiniActionButton(
+                                  icon: Icons.undo_rounded,
+                                  label: '撤销',
+                                  highlighted: _lastSnapshot != null,
+                                  onPressed: _undoMove,
+                                ),
+                                const SizedBox(height: 10),
+                                _MiniActionButton(
+                                  icon: Icons.refresh_rounded,
+                                  label: '重开',
+                                  onPressed: _restart,
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+                        const _FeatureStrip(),
+                        const SizedBox(height: 16),
+                        Wrap(
+                          spacing: 12,
+                          runSpacing: 12,
+                          children: [
+                            _ScoreCard(
+                              label: '当前分数',
+                              value: _game.score,
+                              accent: const Color(0xFFF59E0B),
+                            ),
+                            _ScoreCard(
+                              label: '最高分',
+                              value: _bestScore,
+                              accent: const Color(0xFF38BDF8),
+                            ),
+                            _ScoreCard(
+                              label: '最大方块',
+                              value: _game.highestTile,
+                              accent: const Color(0xFF34D399),
+                            ),
+                            _ScoreCard(
+                              label: '步数',
+                              value: _moveCount,
+                              accent: const Color(0xFFFB7185),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+                        _InfoBanner(
+                          lastMoveGain: _lastMoveGain,
+                          statusLabel: statusLabel,
+                          canUndo: _lastSnapshot != null,
+                          soundEnabled: _soundEnabled,
+                          hapticsEnabled: _hapticsEnabled,
+                        ),
+                        const SizedBox(height: 16),
+                        _ShowcaseStatsPanel(stats: _stats),
+                        const SizedBox(height: 16),
+                        _AchievementPanel(stats: _stats),
+                        const SizedBox(height: 18),
+                        AspectRatio(
+                          aspectRatio: 1,
+                          child: Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF1A2438),
+                              borderRadius: BorderRadius.circular(24),
+                              border: Border.all(
+                                color: Colors.white.withValues(alpha: 0.05),
+                              ),
+                              boxShadow: const [
+                                BoxShadow(
+                                  color: Color(0x55000000),
+                                  blurRadius: 24,
+                                  offset: Offset(0, 16),
+                                ),
+                              ],
+                            ),
+                            child: GridView.builder(
+                              physics: const NeverScrollableScrollPhysics(),
+                              itemCount: _game.size * _game.size,
+                              gridDelegate:
+                                  SliverGridDelegateWithFixedCrossAxisCount(
+                                    crossAxisCount: _game.size,
+                                    mainAxisSpacing: 10,
+                                    crossAxisSpacing: 10,
                                   ),
-                                ],
-                              ),
-                              child: GridView.builder(
-                                physics: const NeverScrollableScrollPhysics(),
-                                itemCount: _game.size * _game.size,
-                                gridDelegate:
-                                    SliverGridDelegateWithFixedCrossAxisCount(
-                                      crossAxisCount: _game.size,
-                                      mainAxisSpacing: 10,
-                                      crossAxisSpacing: 10,
-                                    ),
-                                itemBuilder: (context, index) {
-                                  final row = index ~/ _game.size;
-                                  final column = index % _game.size;
-                                  final value = _game.board[row][column];
-                                  return _TileCell(
-                                    key: ValueKey(index),
-                                    value: value,
-                                    animation: _tileAnimations[index],
-                                  );
-                                },
-                              ),
+                              itemBuilder: (context, index) {
+                                final row = index ~/ _game.size;
+                                final column = index % _game.size;
+                                final value = _game.board[row][column];
+                                return _TileCell(
+                                  key: ValueKey(index),
+                                  value: value,
+                                  animation: _tileAnimations[index],
+                                );
+                              },
                             ),
                           ),
                         ),
-                      ),
-                      const SizedBox(height: 18),
-                      _ControlPad(onMove: _handleMove),
-                    ],
+                        const SizedBox(height: 18),
+                        _ControlPad(onMove: _handleMove),
+                      ],
+                    ),
                   ),
                 ),
               ),
@@ -624,7 +844,10 @@ class _GamePageState extends State<GamePage> {
 }
 
 class _TitlePanel extends StatelessWidget {
-  const _TitlePanel();
+  const _TitlePanel({required this.bestScore, required this.totalGames});
+
+  final int bestScore;
+  final int totalGames;
 
   @override
   Widget build(BuildContext context) {
@@ -635,17 +858,17 @@ class _TitlePanel extends StatelessWidget {
         borderRadius: BorderRadius.circular(22),
         border: Border.all(color: Colors.white.withValues(alpha: 0.05)),
       ),
-      child: const Column(
+      child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              _BrandBadge(),
-              SizedBox(width: 12),
+              const _BrandBadge(),
+              const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
+                  children: const [
                     Text(
                       _GameBrand.appName,
                       style: TextStyle(
@@ -665,10 +888,63 @@ class _TitlePanel extends StatelessWidget {
               ),
             ],
           ),
-          SizedBox(height: 10),
-          Text(
-            '离线也能玩的数字合成小游戏。滑动屏幕，合并相同数字，冲击更高分。',
+          const SizedBox(height: 10),
+          const Text(
+            _GameBrand.storeHeadline,
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 16,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 6),
+          const Text(
+            '离线可玩、自动存档、带音效反馈与成就展示，适合作为可上架展示的休闲益智样板。',
             style: TextStyle(color: Colors.white70, fontSize: 14, height: 1.5),
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              _HeadlineChip(icon: Icons.star_rounded, label: '最佳分 $bestScore'),
+              const SizedBox(width: 8),
+              _HeadlineChip(
+                icon: Icons.sports_esports_rounded,
+                label: '已开局 $totalGames 次',
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _HeadlineChip extends StatelessWidget {
+  const _HeadlineChip({required this.icon, required this.label});
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 16, color: const Color(0xFFF59E0B)),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+            ),
           ),
         ],
       ),
@@ -708,6 +984,86 @@ class _BrandBadge extends StatelessWidget {
             fontSize: 22,
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _FeatureStrip extends StatelessWidget {
+  const _FeatureStrip();
+
+  @override
+  Widget build(BuildContext context) {
+    return Wrap(
+      spacing: 10,
+      runSpacing: 10,
+      children: const [
+        _FeatureCard(
+          icon: Icons.offline_bolt_rounded,
+          title: '离线单机',
+          subtitle: '无需账号与服务端',
+        ),
+        _FeatureCard(
+          icon: Icons.auto_awesome_rounded,
+          title: '音效动画',
+          subtitle: '反馈更像正式产品',
+        ),
+        _FeatureCard(
+          icon: Icons.emoji_events_rounded,
+          title: '成就展示',
+          subtitle: '可用于商店演示',
+        ),
+      ],
+    );
+  }
+}
+
+class _FeatureCard extends StatelessWidget {
+  const _FeatureCard({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 182,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFF131D31),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(
+              color: const Color(0xFFF59E0B).withValues(alpha: 0.18),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Icon(icon, color: const Color(0xFFF59E0B)),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            title,
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            subtitle,
+            style: const TextStyle(color: Colors.white70, height: 1.4),
+          ),
+        ],
       ),
     );
   }
@@ -906,6 +1262,204 @@ class _BannerStat extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+class _ShowcaseStatsPanel extends StatelessWidget {
+  const _ShowcaseStatsPanel({required this.stats});
+
+  final _PlayerStats stats;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFF131D31),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            '玩家统计',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 18,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 6),
+          const Text(
+            '这些数据会本地保存，用于展示产品完成度。',
+            style: TextStyle(color: Colors.white70, height: 1.45),
+          ),
+          const SizedBox(height: 14),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              _MetricChip(
+                icon: Icons.sports_esports_rounded,
+                label: '累计局数',
+                value: '${stats.totalGames}',
+              ),
+              _MetricChip(
+                icon: Icons.swipe_rounded,
+                label: '累计步数',
+                value: '${stats.totalMoves}',
+              ),
+              _MetricChip(
+                icon: Icons.leaderboard_rounded,
+                label: '累计分数',
+                value: '${stats.totalScore}',
+              ),
+              _MetricChip(
+                icon: Icons.auto_graph_rounded,
+                label: '历史最大方块',
+                value: '${stats.bestTile}',
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MetricChip extends StatelessWidget {
+  const _MetricChip({
+    required this.icon,
+    required this.label,
+    required this.value,
+  });
+
+  final IconData icon;
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 134,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1A2438),
+        borderRadius: BorderRadius.circular(18),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, color: const Color(0xFFF59E0B), size: 18),
+          const SizedBox(height: 8),
+          Text(
+            label,
+            style: const TextStyle(color: Colors.white54, fontSize: 12),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            value,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 18,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AchievementPanel extends StatelessWidget {
+  const _AchievementPanel({required this.stats});
+
+  final _PlayerStats stats;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFF131D31),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            '成就展示',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 18,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 6),
+          const Text(
+            '适合在演示版里展示玩家成长与本地留存能力。',
+            style: TextStyle(color: Colors.white70, height: 1.45),
+          ),
+          const SizedBox(height: 14),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: _achievementDefinitions.map((definition) {
+              final unlocked = stats.achievements.contains(definition.key);
+              return _AchievementBadge(
+                definition: definition,
+                unlocked: unlocked,
+              );
+            }).toList(),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AchievementBadge extends StatelessWidget {
+  const _AchievementBadge({required this.definition, required this.unlocked});
+
+  final _AchievementDefinition definition;
+  final bool unlocked;
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = unlocked
+        ? const Color(0xFFF59E0B)
+        : Colors.white.withValues(alpha: 0.18);
+    return Container(
+      width: 118,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1A2438),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: accent),
+      ),
+      child: Column(
+        children: [
+          Icon(definition.icon, color: accent, size: 22),
+          const SizedBox(height: 8),
+          Text(
+            definition.label,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: unlocked ? Colors.white : Colors.white54,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            unlocked ? '已解锁' : '未解锁',
+            style: TextStyle(
+              color: unlocked ? const Color(0xFFFDE68A) : Colors.white38,
+              fontSize: 12,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -1220,7 +1774,7 @@ class _SettingsSheet extends StatelessWidget {
           _SettingsActionTile(
             icon: Icons.delete_outline_rounded,
             title: '清除本地进度',
-            subtitle: '删除当前棋盘、最高分与引导记录',
+            subtitle: '删除当前棋盘、统计、最高分与引导记录',
             destructive: true,
             onTap: () => unawaited(onResetProgress()),
           ),
@@ -1353,6 +1907,184 @@ class _SettingsActionTile extends StatelessWidget {
   }
 }
 
+class _ResultSheet extends StatelessWidget {
+  const _ResultSheet({
+    required this.summary,
+    required this.onRestart,
+    this.onContinue,
+  });
+
+  final _GameResultSummary summary;
+  final VoidCallback onRestart;
+  final VoidCallback? onContinue;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: const BoxDecoration(
+        color: Color(0xFF101827),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      padding: EdgeInsets.fromLTRB(
+        20,
+        16,
+        20,
+        24 + MediaQuery.of(context).padding.bottom,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Center(
+            child: Container(
+              width: 44,
+              height: 5,
+              decoration: BoxDecoration(
+                color: Colors.white24,
+                borderRadius: BorderRadius.circular(999),
+              ),
+            ),
+          ),
+          const SizedBox(height: 18),
+          Row(
+            children: [
+              Container(
+                width: 56,
+                height: 56,
+                decoration: BoxDecoration(
+                  color: summary.isWin
+                      ? const Color(0xFFF59E0B).withValues(alpha: 0.18)
+                      : const Color(0xFFFB7185).withValues(alpha: 0.16),
+                  borderRadius: BorderRadius.circular(18),
+                ),
+                child: Icon(
+                  summary.isWin
+                      ? Icons.emoji_events_rounded
+                      : Icons.flag_rounded,
+                  color: summary.isWin
+                      ? const Color(0xFFF59E0B)
+                      : const Color(0xFFFB7185),
+                ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      summary.title,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 26,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      summary.message,
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        height: 1.45,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              _MetricChip(
+                icon: Icons.star_rounded,
+                label: '本局得分',
+                value: '${summary.score}',
+              ),
+              _MetricChip(
+                icon: Icons.workspace_premium_rounded,
+                label: '历史最高',
+                value: '${summary.bestScore}',
+              ),
+              _MetricChip(
+                icon: Icons.grid_4x4_rounded,
+                label: '最大方块',
+                value: '${summary.highestTile}',
+              ),
+              _MetricChip(
+                icon: Icons.swipe_rounded,
+                label: '本局步数',
+                value: '${summary.moveCount}',
+              ),
+            ],
+          ),
+          if (summary.achievements.isNotEmpty) ...[
+            const SizedBox(height: 18),
+            const Text(
+              '本局解锁成就',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 16,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              children: summary.achievements.map((item) {
+                return _AchievementBadge(
+                  definition: item.definition,
+                  unlocked: true,
+                );
+              }).toList(),
+            ),
+          ],
+          const SizedBox(height: 22),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  style: OutlinedButton.styleFrom(
+                    side: BorderSide(
+                      color: Colors.white.withValues(alpha: 0.14),
+                    ),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(18),
+                    ),
+                  ),
+                  onPressed: onRestart,
+                  child: const Text('再来一局'),
+                ),
+              ),
+              if (onContinue != null) ...[
+                const SizedBox(width: 12),
+                Expanded(
+                  child: FilledButton(
+                    style: FilledButton.styleFrom(
+                      backgroundColor: const Color(0xFFF59E0B),
+                      foregroundColor: const Color(0xFF111827),
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(18),
+                      ),
+                    ),
+                    onPressed: onContinue,
+                    child: const Text('继续挑战'),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _OnboardingSheet extends StatelessWidget {
   const _OnboardingSheet();
 
@@ -1476,8 +2208,8 @@ class _GuideItem extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
-            width: 44,
-            height: 44,
+            width: 42,
+            height: 42,
             decoration: BoxDecoration(
               color: const Color(0xFFF59E0B).withValues(alpha: 0.18),
               borderRadius: BorderRadius.circular(14),
@@ -1502,7 +2234,6 @@ class _GuideItem extends StatelessWidget {
                   style: const TextStyle(
                     color: Colors.white,
                     fontWeight: FontWeight.w800,
-                    fontSize: 16,
                   ),
                 ),
                 const SizedBox(height: 6),
