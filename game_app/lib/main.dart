@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -5,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'game_logic.dart';
+import 'sound_controller.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -35,6 +37,15 @@ class MyApp extends StatelessWidget {
   }
 }
 
+enum _TileAnimationKind { spawn, merge }
+
+class _TileAnimationData {
+  const _TileAnimationData({required this.kind, required this.tick});
+
+  final _TileAnimationKind kind;
+  final int tick;
+}
+
 class GamePage extends StatefulWidget {
   const GamePage({super.key, required this.preferences});
 
@@ -47,19 +58,36 @@ class GamePage extends StatefulWidget {
 class _GamePageState extends State<GamePage> {
   static const _bestScoreKey = 'best_score';
   static const _savedGameKey = 'saved_game_v2';
+  static const _soundEnabledKey = 'sound_enabled';
 
   late final TileGame _game;
+  late final SoundController _soundController;
   late int _bestScore;
+  late bool _soundEnabled;
+
   bool _wonShown = false;
   int _moveCount = 0;
   int _lastMoveGain = 0;
+  int _animationTick = 0;
+
   BoardSnapshot? _lastSnapshot;
+  Map<int, _TileAnimationData> _tileAnimations = const {};
 
   @override
   void initState() {
     super.initState();
     _bestScore = widget.preferences.getInt(_bestScoreKey) ?? 0;
+    _soundEnabled = widget.preferences.getBool(_soundEnabledKey) ?? true;
+    _soundController = SoundController();
+    unawaited(_soundController.setEnabled(_soundEnabled));
     _game = _loadGame();
+    _tileAnimations = _buildInitialAnimations();
+  }
+
+  @override
+  void dispose() {
+    unawaited(_soundController.dispose());
+    super.dispose();
   }
 
   TileGame _loadGame() {
@@ -83,6 +111,48 @@ class _GamePageState extends State<GamePage> {
     }
   }
 
+  Map<int, _TileAnimationData> _buildInitialAnimations() {
+    final animations = <int, _TileAnimationData>{};
+    for (var row = 0; row < _game.size; row++) {
+      for (var column = 0; column < _game.size; column++) {
+        final value = _game.board[row][column];
+        if (value != 0) {
+          final index = row * _game.size + column;
+          animations[index] = _nextTileAnimation(_TileAnimationKind.spawn);
+        }
+      }
+    }
+    return animations;
+  }
+
+  Map<int, _TileAnimationData> _buildTileAnimations(
+    BoardSnapshot previous,
+    BoardSnapshot current,
+  ) {
+    final animations = <int, _TileAnimationData>{};
+    for (var row = 0; row < _game.size; row++) {
+      for (var column = 0; column < _game.size; column++) {
+        final before = previous.board[row][column];
+        final after = current.board[row][column];
+        if (after == 0 || before == after) {
+          continue;
+        }
+
+        final kind = before == 0 || after <= before
+            ? _TileAnimationKind.spawn
+            : _TileAnimationKind.merge;
+        final index = row * _game.size + column;
+        animations[index] = _nextTileAnimation(kind);
+      }
+    }
+    return animations;
+  }
+
+  _TileAnimationData _nextTileAnimation(_TileAnimationKind kind) {
+    _animationTick += 1;
+    return _TileAnimationData(kind: kind, tick: _animationTick);
+  }
+
   Future<void> _persistGame() async {
     await widget.preferences.setString(
       _savedGameKey,
@@ -94,16 +164,35 @@ class _GamePageState extends State<GamePage> {
     return widget.preferences.setInt(_bestScoreKey, _bestScore);
   }
 
+  Future<void> _persistSoundSetting() {
+    return widget.preferences.setBool(_soundEnabledKey, _soundEnabled);
+  }
+
+  Future<void> _toggleSound() async {
+    HapticFeedback.selectionClick();
+    final nextEnabled = !_soundEnabled;
+    setState(() {
+      _soundEnabled = nextEnabled;
+    });
+    await _soundController.setEnabled(nextEnabled);
+    await _persistSoundSetting();
+    if (mounted) {
+      _showToast(nextEnabled ? '音效已开启' : '音效已关闭');
+    }
+  }
+
   Future<void> _restart() async {
     HapticFeedback.mediumImpact();
+    _game.reset();
     setState(() {
       _wonShown = false;
       _moveCount = 0;
       _lastMoveGain = 0;
       _lastSnapshot = null;
-      _game.reset();
+      _tileAnimations = _buildInitialAnimations();
     });
     await _persistGame();
+    unawaited(_soundController.playRestart());
   }
 
   Future<void> _undoMove() async {
@@ -113,25 +202,30 @@ class _GamePageState extends State<GamePage> {
       return;
     }
 
+    final beforeUndo = _game.snapshot();
     HapticFeedback.selectionClick();
+    _game.restore(snapshot: snapshot);
     setState(() {
-      _game.restore(snapshot: snapshot);
       _moveCount = _game.moveCount;
       _lastMoveGain = 0;
       _wonShown = _game.hasWon;
       _lastSnapshot = null;
+      _tileAnimations = _buildTileAnimations(beforeUndo, _game.snapshot());
     });
     await _persistGame();
+    unawaited(_soundController.playUndo());
   }
 
   Future<void> _handleMove(MoveDirection direction) async {
-    final snapshot = _game.snapshot();
+    final previousSnapshot = _game.snapshot();
     final result = _game.move(direction);
     if (!result.changed) {
+      HapticFeedback.selectionClick();
       return;
     }
 
-    _lastSnapshot = snapshot;
+    final currentSnapshot = _game.snapshot();
+    _lastSnapshot = previousSnapshot;
     _moveCount = _game.moveCount;
     _lastMoveGain = result.gainedScore;
 
@@ -147,10 +241,13 @@ class _GamePageState extends State<GamePage> {
     }
 
     HapticFeedback.lightImpact();
-    setState(() {});
+    setState(() {
+      _tileAnimations = _buildTileAnimations(previousSnapshot, currentSnapshot);
+    });
 
     if (_game.hasWon && !_wonShown) {
       _wonShown = true;
+      unawaited(_soundController.playWin());
       await _showGameDialog(
         title: '你赢了！',
         message: '已经合成到 2048，是否继续冲击更高分？',
@@ -162,8 +259,12 @@ class _GamePageState extends State<GamePage> {
           _restart();
         },
       );
-    } else if (_game.isGameOver) {
+      return;
+    }
+
+    if (_game.isGameOver) {
       HapticFeedback.heavyImpact();
+      unawaited(_soundController.playLose());
       await _showGameDialog(
         title: '游戏结束',
         message: '当前棋盘已无可移动空间，是否马上再来一局？',
@@ -173,7 +274,10 @@ class _GamePageState extends State<GamePage> {
           _restart();
         },
       );
+      return;
     }
+
+    unawaited(_soundController.playMove(merged: result.gainedScore > 0));
   }
 
   void _showToast(String text) {
@@ -219,9 +323,7 @@ class _GamePageState extends State<GamePage> {
 
   @override
   Widget build(BuildContext context) {
-    final statusLabel = _game.highestTile >= 2048
-        ? '已突破 2048'
-        : '目标 ${2048.toString()}';
+    final statusLabel = _game.highestTile >= 2048 ? '已突破 2048' : '目标 2048';
 
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
@@ -265,8 +367,18 @@ class _GamePageState extends State<GamePage> {
                           Column(
                             children: [
                               _MiniActionButton(
+                                icon: _soundEnabled
+                                    ? Icons.volume_up_rounded
+                                    : Icons.volume_off_rounded,
+                                label: _soundEnabled ? '声音开' : '声音关',
+                                highlighted: _soundEnabled,
+                                onPressed: _toggleSound,
+                              ),
+                              const SizedBox(height: 10),
+                              _MiniActionButton(
                                 icon: Icons.undo_rounded,
                                 label: '撤销',
+                                highlighted: _lastSnapshot != null,
                                 onPressed: _undoMove,
                               ),
                               const SizedBox(height: 10),
@@ -311,6 +423,7 @@ class _GamePageState extends State<GamePage> {
                         lastMoveGain: _lastMoveGain,
                         statusLabel: statusLabel,
                         canUndo: _lastSnapshot != null,
+                        soundEnabled: _soundEnabled,
                       ),
                       const SizedBox(height: 18),
                       Expanded(
@@ -346,7 +459,11 @@ class _GamePageState extends State<GamePage> {
                                   final row = index ~/ _game.size;
                                   final column = index % _game.size;
                                   final value = _game.board[row][column];
-                                  return _TileCell(value: value);
+                                  return _TileCell(
+                                    key: ValueKey(index),
+                                    value: value,
+                                    animation: _tileAnimations[index],
+                                  );
                                 },
                               ),
                             ),
@@ -407,11 +524,13 @@ class _MiniActionButton extends StatelessWidget {
     required this.icon,
     required this.label,
     required this.onPressed,
+    this.highlighted = false,
   });
 
   final IconData icon;
   final String label;
   final VoidCallback onPressed;
+  final bool highlighted;
 
   @override
   Widget build(BuildContext context) {
@@ -419,8 +538,10 @@ class _MiniActionButton extends StatelessWidget {
       width: 84,
       child: FilledButton(
         style: FilledButton.styleFrom(
-          backgroundColor: const Color(0xFF1A2438),
-          foregroundColor: Colors.white,
+          backgroundColor: highlighted
+              ? const Color(0xFFF59E0B)
+              : const Color(0xFF1A2438),
+          foregroundColor: highlighted ? const Color(0xFF111827) : Colors.white,
           padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 10),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(18),
@@ -475,12 +596,22 @@ class _ScoreCard extends StatelessWidget {
             style: const TextStyle(color: Colors.white54, fontSize: 12),
           ),
           const SizedBox(height: 6),
-          Text(
-            '$value',
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 28,
-              fontWeight: FontWeight.bold,
+          AnimatedSwitcher(
+            duration: const Duration(milliseconds: 180),
+            transitionBuilder: (child, animation) {
+              return FadeTransition(
+                opacity: animation,
+                child: ScaleTransition(scale: animation, child: child),
+              );
+            },
+            child: Text(
+              '$value',
+              key: ValueKey(value),
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 28,
+                fontWeight: FontWeight.bold,
+              ),
             ),
           ),
         ],
@@ -494,11 +625,13 @@ class _InfoBanner extends StatelessWidget {
     required this.lastMoveGain,
     required this.statusLabel,
     required this.canUndo,
+    required this.soundEnabled,
   });
 
   final int lastMoveGain;
   final String statusLabel;
   final bool canUndo;
+  final bool soundEnabled;
 
   @override
   Widget build(BuildContext context) {
@@ -520,6 +653,9 @@ class _InfoBanner extends StatelessWidget {
           ),
           Expanded(
             child: _BannerStat(title: '撤销', value: canUndo ? '可用' : '未准备'),
+          ),
+          Expanded(
+            child: _BannerStat(title: '音效', value: soundEnabled ? '开启' : '关闭'),
           ),
         ],
       ),
@@ -543,12 +679,28 @@ class _BannerStat extends StatelessWidget {
           style: const TextStyle(color: Colors.white54, fontSize: 12),
         ),
         const SizedBox(height: 4),
-        Text(
-          value,
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 16,
-            fontWeight: FontWeight.w700,
+        AnimatedSwitcher(
+          duration: const Duration(milliseconds: 180),
+          transitionBuilder: (child, animation) {
+            return FadeTransition(
+              opacity: animation,
+              child: SlideTransition(
+                position: Tween<Offset>(
+                  begin: const Offset(0, 0.15),
+                  end: Offset.zero,
+                ).animate(animation),
+                child: child,
+              ),
+            );
+          },
+          child: Text(
+            value,
+            key: ValueKey(value),
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
+            ),
           ),
         ),
       ],
@@ -556,45 +708,120 @@ class _BannerStat extends StatelessWidget {
   }
 }
 
-class _TileCell extends StatelessWidget {
-  const _TileCell({required this.value});
+class _TileCell extends StatefulWidget {
+  const _TileCell({super.key, required this.value, this.animation});
 
   final int value;
+  final _TileAnimationData? animation;
+
+  @override
+  State<_TileCell> createState() => _TileCellState();
+}
+
+class _TileCellState extends State<_TileCell>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  late Animation<double> _scaleAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 220),
+    );
+    _configureAnimation();
+    if (widget.animation != null && widget.value != 0) {
+      _controller.forward(from: 0);
+    } else {
+      _controller.value = 1;
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant _TileCell oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final changedAnimation =
+        widget.animation?.tick != oldWidget.animation?.tick;
+    final changedValue = widget.value != oldWidget.value;
+    if (changedAnimation || changedValue) {
+      _configureAnimation();
+      if (widget.animation != null && widget.value != 0) {
+        _controller.forward(from: 0);
+      } else {
+        _controller.value = 1;
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _configureAnimation() {
+    final beginScale = switch (widget.animation?.kind) {
+      _TileAnimationKind.merge => 1.18,
+      _TileAnimationKind.spawn => 0.72,
+      null => 1.0,
+    };
+
+    _scaleAnimation = Tween<double>(
+      begin: beginScale,
+      end: 1.0,
+    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOutBack));
+  }
 
   @override
   Widget build(BuildContext context) {
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 160),
-      curve: Curves.easeOutBack,
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: _tileGradient(value),
-        ),
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: value == 0
-            ? null
-            : [
-                BoxShadow(
-                  color: _tileGradient(value).last.withValues(alpha: 0.25),
-                  blurRadius: 12,
-                  offset: const Offset(0, 8),
-                ),
-              ],
-      ),
-      alignment: Alignment.center,
-      child: value == 0
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, child) {
+        final glowBoost = widget.animation?.kind == _TileAnimationKind.merge
+            ? (1 - _controller.value) * 0.38
+            : (1 - _controller.value) * 0.18;
+
+        return Transform.scale(
+          scale: _scaleAnimation.value,
+          child: Container(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: _tileGradient(widget.value),
+              ),
+              borderRadius: BorderRadius.circular(16),
+              boxShadow: widget.value == 0
+                  ? null
+                  : [
+                      BoxShadow(
+                        color: _tileGradient(
+                          widget.value,
+                        ).last.withValues(alpha: 0.22 + glowBoost),
+                        blurRadius: 12 + 14 * glowBoost,
+                        offset: const Offset(0, 8),
+                      ),
+                    ],
+            ),
+            alignment: Alignment.center,
+            child: child,
+          ),
+        );
+      },
+      child: widget.value == 0
           ? null
           : FittedBox(
               fit: BoxFit.scaleDown,
               child: Padding(
                 padding: const EdgeInsets.all(6),
                 child: Text(
-                  '$value',
+                  '${widget.value}',
                   style: TextStyle(
-                    color: value <= 4 ? const Color(0xFF111827) : Colors.white,
-                    fontSize: value >= 1024 ? 28 : 34,
+                    color: widget.value <= 4
+                        ? const Color(0xFF111827)
+                        : Colors.white,
+                    fontSize: widget.value >= 1024 ? 28 : 34,
                     fontWeight: FontWeight.w900,
                   ),
                 ),
