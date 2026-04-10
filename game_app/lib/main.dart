@@ -46,6 +46,12 @@ class _TileAnimationData {
   final int tick;
 }
 
+class _GameBrand {
+  static const appName = '2048 Solo';
+  static const tagline = '离线也能玩的数字合成小游戏';
+  static const version = 'Build 1.2';
+}
+
 class GamePage extends StatefulWidget {
   const GamePage({super.key, required this.preferences});
 
@@ -59,11 +65,14 @@ class _GamePageState extends State<GamePage> {
   static const _bestScoreKey = 'best_score';
   static const _savedGameKey = 'saved_game_v2';
   static const _soundEnabledKey = 'sound_enabled';
+  static const _hapticsEnabledKey = 'haptics_enabled';
+  static const _onboardingSeenKey = 'onboarding_seen_v1';
 
   late final TileGame _game;
   late final SoundController _soundController;
   late int _bestScore;
   late bool _soundEnabled;
+  late bool _hapticsEnabled;
 
   bool _wonShown = false;
   int _moveCount = 0;
@@ -78,10 +87,12 @@ class _GamePageState extends State<GamePage> {
     super.initState();
     _bestScore = widget.preferences.getInt(_bestScoreKey) ?? 0;
     _soundEnabled = widget.preferences.getBool(_soundEnabledKey) ?? true;
+    _hapticsEnabled = widget.preferences.getBool(_hapticsEnabledKey) ?? true;
     _soundController = SoundController();
     unawaited(_soundController.setEnabled(_soundEnabled));
     _game = _loadGame();
     _tileAnimations = _buildInitialAnimations();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _maybeShowOnboarding());
   }
 
   @override
@@ -168,8 +179,18 @@ class _GamePageState extends State<GamePage> {
     return widget.preferences.setBool(_soundEnabledKey, _soundEnabled);
   }
 
+  Future<void> _persistHapticsSetting() {
+    return widget.preferences.setBool(_hapticsEnabledKey, _hapticsEnabled);
+  }
+
+  Future<void> _maybeHaptic(Future<void> Function() callback) async {
+    if (_hapticsEnabled) {
+      await callback();
+    }
+  }
+
   Future<void> _toggleSound() async {
-    HapticFeedback.selectionClick();
+    await _maybeHaptic(HapticFeedback.selectionClick);
     final nextEnabled = !_soundEnabled;
     setState(() {
       _soundEnabled = nextEnabled;
@@ -182,7 +203,7 @@ class _GamePageState extends State<GamePage> {
   }
 
   Future<void> _restart() async {
-    HapticFeedback.mediumImpact();
+    await _maybeHaptic(HapticFeedback.mediumImpact);
     _game.reset();
     setState(() {
       _wonShown = false;
@@ -203,7 +224,7 @@ class _GamePageState extends State<GamePage> {
     }
 
     final beforeUndo = _game.snapshot();
-    HapticFeedback.selectionClick();
+    await _maybeHaptic(HapticFeedback.selectionClick);
     _game.restore(snapshot: snapshot);
     setState(() {
       _moveCount = _game.moveCount;
@@ -220,7 +241,7 @@ class _GamePageState extends State<GamePage> {
     final previousSnapshot = _game.snapshot();
     final result = _game.move(direction);
     if (!result.changed) {
-      HapticFeedback.selectionClick();
+      await _maybeHaptic(HapticFeedback.selectionClick);
       return;
     }
 
@@ -240,7 +261,7 @@ class _GamePageState extends State<GamePage> {
       return;
     }
 
-    HapticFeedback.lightImpact();
+    await _maybeHaptic(HapticFeedback.lightImpact);
     setState(() {
       _tileAnimations = _buildTileAnimations(previousSnapshot, currentSnapshot);
     });
@@ -263,7 +284,7 @@ class _GamePageState extends State<GamePage> {
     }
 
     if (_game.isGameOver) {
-      HapticFeedback.heavyImpact();
+      await _maybeHaptic(HapticFeedback.heavyImpact);
       unawaited(_soundController.playLose());
       await _showGameDialog(
         title: '游戏结束',
@@ -278,6 +299,117 @@ class _GamePageState extends State<GamePage> {
     }
 
     unawaited(_soundController.playMove(merged: result.gainedScore > 0));
+  }
+
+  Future<void> _maybeShowOnboarding() async {
+    final hasSeen = widget.preferences.getBool(_onboardingSeenKey) ?? false;
+    if (hasSeen || !mounted) {
+      return;
+    }
+
+    await widget.preferences.setBool(_onboardingSeenKey, true);
+    if (!mounted) {
+      return;
+    }
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => const _OnboardingSheet(),
+    );
+  }
+
+  Future<void> _openSettings() async {
+    await _maybeHaptic(HapticFeedback.selectionClick);
+    if (!mounted) {
+      return;
+    }
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, bottomSetState) {
+            Future<void> updateSound(bool value) async {
+              bottomSetState(() => _soundEnabled = value);
+              setState(() => _soundEnabled = value);
+              await _soundController.setEnabled(value);
+              await _persistSoundSetting();
+            }
+
+            Future<void> updateHaptics(bool value) async {
+              bottomSetState(() => _hapticsEnabled = value);
+              setState(() => _hapticsEnabled = value);
+              await _persistHapticsSetting();
+            }
+
+            Future<void> resetProgress() async {
+              final navigator = Navigator.of(context);
+              final confirmed = await showDialog<bool>(
+                context: context,
+                builder: (dialogContext) {
+                  return AlertDialog(
+                    backgroundColor: const Color(0xFF172033),
+                    title: const Text(
+                      '清除本地进度',
+                      style: TextStyle(color: Colors.white),
+                    ),
+                    content: const Text(
+                      '这会清空当前棋盘、最高分和首次引导记录，且无法撤回。',
+                      style: TextStyle(color: Colors.white70, height: 1.5),
+                    ),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.of(dialogContext).pop(false),
+                        child: const Text('取消'),
+                      ),
+                      FilledButton(
+                        onPressed: () => Navigator.of(dialogContext).pop(true),
+                        child: const Text('确认清除'),
+                      ),
+                    ],
+                  );
+                },
+              );
+
+              if (confirmed != true) {
+                return;
+              }
+
+              await widget.preferences.remove(_savedGameKey);
+              await widget.preferences.remove(_bestScoreKey);
+              await widget.preferences.remove(_onboardingSeenKey);
+              _bestScore = 0;
+              await _restart();
+              if (mounted) {
+                navigator.pop();
+                _showToast('本地进度已清除');
+              }
+            }
+
+            Future<void> replayGuide() async {
+              Navigator.of(context).pop();
+              await widget.preferences.remove(_onboardingSeenKey);
+              if (mounted) {
+                await _maybeShowOnboarding();
+              }
+            }
+
+            return _SettingsSheet(
+              soundEnabled: _soundEnabled,
+              hapticsEnabled: _hapticsEnabled,
+              onSoundChanged: updateSound,
+              onHapticsChanged: updateHaptics,
+              onReplayGuide: replayGuide,
+              onResetProgress: resetProgress,
+            );
+          },
+        );
+      },
+    );
   }
 
   void _showToast(String text) {
@@ -367,6 +499,12 @@ class _GamePageState extends State<GamePage> {
                           Column(
                             children: [
                               _MiniActionButton(
+                                icon: Icons.settings_rounded,
+                                label: '设置',
+                                onPressed: _openSettings,
+                              ),
+                              const SizedBox(height: 10),
+                              _MiniActionButton(
                                 icon: _soundEnabled
                                     ? Icons.volume_up_rounded
                                     : Icons.volume_off_rounded,
@@ -424,6 +562,7 @@ class _GamePageState extends State<GamePage> {
                         statusLabel: statusLabel,
                         canUndo: _lastSnapshot != null,
                         soundEnabled: _soundEnabled,
+                        hapticsEnabled: _hapticsEnabled,
                       ),
                       const SizedBox(height: 18),
                       Expanded(
@@ -499,21 +638,76 @@ class _TitlePanel extends StatelessWidget {
       child: const Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            '2048 Solo',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 34,
-              fontWeight: FontWeight.w900,
-              letterSpacing: 0.5,
-            ),
+          Row(
+            children: [
+              _BrandBadge(),
+              SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _GameBrand.appName,
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 32,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                    SizedBox(height: 4),
+                    Text(
+                      _GameBrand.version,
+                      style: TextStyle(color: Colors.white54, fontSize: 12),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
-          SizedBox(height: 8),
+          SizedBox(height: 10),
           Text(
             '离线也能玩的数字合成小游戏。滑动屏幕，合并相同数字，冲击更高分。',
             style: TextStyle(color: Colors.white70, fontSize: 14, height: 1.5),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _BrandBadge extends StatelessWidget {
+  const _BrandBadge();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 58,
+      height: 58,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16),
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFFFBBF24), Color(0xFF8B5CF6)],
+        ),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x44F59E0B),
+            blurRadius: 12,
+            offset: Offset(0, 6),
+          ),
+        ],
+      ),
+      child: const Center(
+        child: Text(
+          '24',
+          style: TextStyle(
+            color: Colors.white,
+            fontWeight: FontWeight.w900,
+            fontSize: 22,
+          ),
+        ),
       ),
     );
   }
@@ -626,12 +820,14 @@ class _InfoBanner extends StatelessWidget {
     required this.statusLabel,
     required this.canUndo,
     required this.soundEnabled,
+    required this.hapticsEnabled,
   });
 
   final int lastMoveGain;
   final String statusLabel;
   final bool canUndo;
   final bool soundEnabled;
+  final bool hapticsEnabled;
 
   @override
   Widget build(BuildContext context) {
@@ -656,6 +852,12 @@ class _InfoBanner extends StatelessWidget {
           ),
           Expanded(
             child: _BannerStat(title: '音效', value: soundEnabled ? '开启' : '关闭'),
+          ),
+          Expanded(
+            child: _BannerStat(
+              title: '震动',
+              value: hapticsEnabled ? '开启' : '关闭',
+            ),
           ),
         ],
       ),
@@ -931,6 +1133,388 @@ class _ArrowButton extends StatelessWidget {
       ),
       onPressed: onPressed,
       child: Icon(icon, size: 34),
+    );
+  }
+}
+
+class _SettingsSheet extends StatelessWidget {
+  const _SettingsSheet({
+    required this.soundEnabled,
+    required this.hapticsEnabled,
+    required this.onSoundChanged,
+    required this.onHapticsChanged,
+    required this.onReplayGuide,
+    required this.onResetProgress,
+  });
+
+  final bool soundEnabled;
+  final bool hapticsEnabled;
+  final Future<void> Function(bool value) onSoundChanged;
+  final Future<void> Function(bool value) onHapticsChanged;
+  final Future<void> Function() onReplayGuide;
+  final Future<void> Function() onResetProgress;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: const BoxDecoration(
+        color: Color(0xFF101827),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      padding: EdgeInsets.fromLTRB(
+        20,
+        16,
+        20,
+        24 + MediaQuery.of(context).padding.bottom,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Center(
+            child: Container(
+              width: 44,
+              height: 5,
+              decoration: BoxDecoration(
+                color: Colors.white24,
+                borderRadius: BorderRadius.circular(999),
+              ),
+            ),
+          ),
+          const SizedBox(height: 18),
+          const Text(
+            '设置',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 26,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            '调整你的游玩体验，或管理本地数据。',
+            style: TextStyle(color: Colors.white70, height: 1.5),
+          ),
+          const SizedBox(height: 20),
+          _SettingsSwitchTile(
+            title: '音效反馈',
+            subtitle: '控制移动、合并、胜利与失败提示音',
+            value: soundEnabled,
+            onChanged: (value) => unawaited(onSoundChanged(value)),
+          ),
+          const SizedBox(height: 12),
+          _SettingsSwitchTile(
+            title: '触感反馈',
+            subtitle: '控制滑动、撤销与结算时的震动反馈',
+            value: hapticsEnabled,
+            onChanged: (value) => unawaited(onHapticsChanged(value)),
+          ),
+          const SizedBox(height: 18),
+          _SettingsActionTile(
+            icon: Icons.auto_awesome_rounded,
+            title: '重新查看新手引导',
+            subtitle: '再次查看玩法说明与操作提示',
+            onTap: () => unawaited(onReplayGuide()),
+          ),
+          const SizedBox(height: 10),
+          _SettingsActionTile(
+            icon: Icons.delete_outline_rounded,
+            title: '清除本地进度',
+            subtitle: '删除当前棋盘、最高分与引导记录',
+            destructive: true,
+            onTap: () => unawaited(onResetProgress()),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SettingsSwitchTile extends StatelessWidget {
+  const _SettingsSwitchTile({
+    required this.title,
+    required this.subtitle,
+    required this.value,
+    required this.onChanged,
+  });
+
+  final String title;
+  final String subtitle;
+  final bool value;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      decoration: BoxDecoration(
+        color: const Color(0xFF131D31),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  subtitle,
+                  style: const TextStyle(color: Colors.white70, height: 1.45),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          Switch.adaptive(value: value, onChanged: onChanged),
+        ],
+      ),
+    );
+  }
+}
+
+class _SettingsActionTile extends StatelessWidget {
+  const _SettingsActionTile({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+    this.destructive = false,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+  final bool destructive;
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = destructive
+        ? const Color(0xFFFB7185)
+        : const Color(0xFFF59E0B);
+
+    return Material(
+      color: const Color(0xFF131D31),
+      borderRadius: BorderRadius.circular(20),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(20),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          child: Row(
+            children: [
+              Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  color: accent.withValues(alpha: 0.16),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Icon(icon, color: accent),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      subtitle,
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        height: 1.45,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(Icons.chevron_right_rounded, color: accent),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _OnboardingSheet extends StatelessWidget {
+  const _OnboardingSheet();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: const BoxDecoration(
+        color: Color(0xFF101827),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      padding: EdgeInsets.fromLTRB(
+        20,
+        16,
+        20,
+        24 + MediaQuery.of(context).padding.bottom,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Center(
+            child: Container(
+              width: 44,
+              height: 5,
+              decoration: BoxDecoration(
+                color: Colors.white24,
+                borderRadius: BorderRadius.circular(999),
+              ),
+            ),
+          ),
+          const SizedBox(height: 18),
+          const Row(
+            children: [
+              _BrandBadge(),
+              SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _GameBrand.appName,
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 26,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    SizedBox(height: 4),
+                    Text(
+                      _GameBrand.tagline,
+                      style: TextStyle(color: Colors.white70),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 18),
+          const _GuideItem(
+            step: '01',
+            title: '滑动屏幕或点按方向键',
+            description: '每次移动都会让棋盘上的数字向一个方向靠拢。',
+          ),
+          const SizedBox(height: 12),
+          const _GuideItem(
+            step: '02',
+            title: '相同数字会自动合并',
+            description: '例如 2+2=4、4+4=8，持续叠加冲击更高分。',
+          ),
+          const SizedBox(height: 12),
+          const _GuideItem(
+            step: '03',
+            title: '把 2048 合成出来',
+            description: '如果棋盘无路可走则结束，你也可以在设置里重置进度。',
+          ),
+          const SizedBox(height: 22),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFFF59E0B),
+                foregroundColor: const Color(0xFF111827),
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(18),
+                ),
+              ),
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text(
+                '开始游戏',
+                style: TextStyle(fontWeight: FontWeight.w800),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _GuideItem extends StatelessWidget {
+  const _GuideItem({
+    required this.step,
+    required this.title,
+    required this.description,
+  });
+
+  final String step;
+  final String title;
+  final String description;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFF131D31),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: const Color(0xFFF59E0B).withValues(alpha: 0.18),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Center(
+              child: Text(
+                step,
+                style: const TextStyle(
+                  color: Color(0xFFF59E0B),
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 16,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  description,
+                  style: const TextStyle(color: Colors.white70, height: 1.5),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
