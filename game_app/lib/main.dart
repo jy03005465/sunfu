@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'game_logic.dart';
+import 'legal_documents.dart';
 import 'sound_controller.dart';
 
 Future<void> main() async {
@@ -49,7 +50,7 @@ class _TileAnimationData {
 class _GameBrand {
   static const appName = '2048 Solo';
   static const tagline = '离线也能玩的数字合成小游戏';
-  static const version = 'Build 1.3 Showcase';
+  static const version = 'Build 1.4 Privacy';
   static const storeHeadline = '更像商店成品的单机益智体验';
 }
 
@@ -215,6 +216,7 @@ class _GamePageState extends State<GamePage> {
   static const _hapticsEnabledKey = 'haptics_enabled';
   static const _onboardingSeenKey = 'onboarding_seen_v1';
   static const _statsKey = 'player_stats_v1';
+  static const _privacyConsentKey = 'privacy_consent_v1';
 
   late final TileGame _game;
   late final SoundController _soundController;
@@ -224,6 +226,7 @@ class _GamePageState extends State<GamePage> {
   late _PlayerStats _stats;
 
   bool _wonShown = false;
+  bool _privacyAccepted = false;
   int _moveCount = 0;
   int _lastMoveGain = 0;
   int _animationTick = 0;
@@ -237,12 +240,13 @@ class _GamePageState extends State<GamePage> {
     _bestScore = widget.preferences.getInt(_bestScoreKey) ?? 0;
     _soundEnabled = widget.preferences.getBool(_soundEnabledKey) ?? true;
     _hapticsEnabled = widget.preferences.getBool(_hapticsEnabledKey) ?? true;
+    _privacyAccepted = widget.preferences.getBool(_privacyConsentKey) ?? false;
     _stats = _loadStats();
     _soundController = SoundController();
     unawaited(_soundController.setEnabled(_soundEnabled));
     _game = _loadGame();
     _tileAnimations = _buildInitialAnimations();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _maybeShowOnboarding());
+    WidgetsBinding.instance.addPostFrameCallback((_) => _runStartupFlow());
   }
 
   @override
@@ -289,33 +293,79 @@ class _GamePageState extends State<GamePage> {
     }
   }
 
-  Future<void> _persistGame() {
-    return widget.preferences.setString(
-      _savedGameKey,
-      jsonEncode(_game.toJson()),
-    );
-  }
-
-  Future<void> _persistBestScore() {
-    return widget.preferences.setInt(_bestScoreKey, _bestScore);
-  }
-
-  Future<void> _persistSoundSetting() {
-    return widget.preferences.setBool(_soundEnabledKey, _soundEnabled);
-  }
-
-  Future<void> _persistHapticsSetting() {
-    return widget.preferences.setBool(_hapticsEnabledKey, _hapticsEnabled);
-  }
-
-  Future<void> _persistStats() {
-    return widget.preferences.setString(_statsKey, jsonEncode(_stats.toJson()));
-  }
-
-  Future<void> _maybeHaptic(Future<void> Function() callback) async {
-    if (_hapticsEnabled) {
-      await callback();
+  Future<void> _runStartupFlow() async {
+    final accepted = await _ensurePrivacyConsent();
+    if (!accepted || !mounted) {
+      return;
     }
+    await _maybeShowOnboarding();
+  }
+
+  Future<bool> _ensurePrivacyConsent() async {
+    if (_privacyAccepted || !mounted) {
+      return true;
+    }
+
+    final accepted = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return _PrivacyConsentDialog(
+          onViewPrivacy: () => _openLegalPage(
+            title: '隐私政策',
+            content: LegalDocuments.privacyPolicy,
+          ),
+          onViewTerms: () => _openLegalPage(
+            title: '用户协议',
+            content: LegalDocuments.userAgreement,
+          ),
+        );
+      },
+    );
+
+    if (accepted == true) {
+      _privacyAccepted = true;
+      await widget.preferences.setBool(_privacyConsentKey, true);
+      return true;
+    }
+
+    if (mounted) {
+      await showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) {
+          return AlertDialog(
+            backgroundColor: const Color(0xFF172033),
+            title: const Text('需要同意后才能继续', style: TextStyle(color: Colors.white)),
+            content: const Text(
+              '若不同意隐私政策与用户协议，应用将无法继续提供服务。',
+              style: TextStyle(color: Colors.white70, height: 1.5),
+            ),
+            actions: [
+              FilledButton(
+                onPressed: () => SystemNavigator.pop(),
+                child: const Text('退出应用'),
+              ),
+            ],
+          );
+        },
+      );
+    }
+    return false;
+  }
+
+  Future<void> _openLegalPage({
+    required String title,
+    required String content,
+  }) async {
+    if (!mounted) {
+      return;
+    }
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (context) => _LegalDocumentPage(title: title, content: content),
+      ),
+    );
   }
 
   Map<int, _TileAnimationData> _buildInitialAnimations() {
@@ -360,6 +410,35 @@ class _GamePageState extends State<GamePage> {
     return _TileAnimationData(kind: kind, tick: _animationTick);
   }
 
+  Future<void> _persistGame() {
+    return widget.preferences.setString(
+      _savedGameKey,
+      jsonEncode(_game.toJson()),
+    );
+  }
+
+  Future<void> _persistBestScore() {
+    return widget.preferences.setInt(_bestScoreKey, _bestScore);
+  }
+
+  Future<void> _persistSoundSetting() {
+    return widget.preferences.setBool(_soundEnabledKey, _soundEnabled);
+  }
+
+  Future<void> _persistHapticsSetting() {
+    return widget.preferences.setBool(_hapticsEnabledKey, _hapticsEnabled);
+  }
+
+  Future<void> _persistStats() {
+    return widget.preferences.setString(_statsKey, jsonEncode(_stats.toJson()));
+  }
+
+  Future<void> _maybeHaptic(Future<void> Function() callback) async {
+    if (_hapticsEnabled) {
+      await callback();
+    }
+  }
+
   Future<void> _toggleSound() async {
     await _maybeHaptic(HapticFeedback.selectionClick);
     final nextEnabled = !_soundEnabled;
@@ -375,7 +454,6 @@ class _GamePageState extends State<GamePage> {
 
   Future<void> _restart() async {
     await _maybeHaptic(HapticFeedback.mediumImpact);
-    _recordCompletedGame();
     _game.reset();
     setState(() {
       _wonShown = false;
@@ -410,6 +488,10 @@ class _GamePageState extends State<GamePage> {
   }
 
   Future<void> _handleMove(MoveDirection direction) async {
+    if (!_privacyAccepted) {
+      return;
+    }
+
     final previousSnapshot = _game.snapshot();
     final result = _game.move(direction);
     if (!result.changed) {
@@ -438,33 +520,31 @@ class _GamePageState extends State<GamePage> {
       _tileAnimations = _buildTileAnimations(previousSnapshot, currentSnapshot);
     });
 
-    final unlocked = await _updateStatsForCurrentProgress();
-    if (unlocked.isNotEmpty && mounted) {
-      _showToast('解锁成就：${unlocked.first.definition.label}');
-    }
-
     if (_game.hasWon && !_wonShown) {
       _wonShown = true;
+      _recordCompletedGame();
+      final achievements = await _updateStatsForRun();
       unawaited(_soundController.playWin());
       await _showResultSheet(
         _GameResultSummary(
           title: '你赢了！',
-          message: '已经成功合成到 2048，继续挑战更高分吧。',
+          message: '已经合成到 2048，继续挑战更高分吧。',
           score: _game.score,
           bestScore: _bestScore,
           highestTile: _game.highestTile,
           moveCount: _moveCount,
           isWin: true,
-          achievements: unlocked,
+          achievements: achievements,
         ),
       );
       return;
     }
 
     if (_game.isGameOver) {
+      _recordCompletedGame();
+      final achievements = await _updateStatsForRun();
       await _maybeHaptic(HapticFeedback.heavyImpact);
       unawaited(_soundController.playLose());
-      _recordCompletedGame();
       await _showResultSheet(
         _GameResultSummary(
           title: '游戏结束',
@@ -474,7 +554,7 @@ class _GamePageState extends State<GamePage> {
           highestTile: _game.highestTile,
           moveCount: _moveCount,
           isWin: false,
-          achievements: unlocked,
+          achievements: achievements,
         ),
       );
       return;
@@ -483,15 +563,16 @@ class _GamePageState extends State<GamePage> {
     unawaited(_soundController.playMove(merged: result.gainedScore > 0));
   }
 
-  Future<List<_AchievementUnlock>> _updateStatsForCurrentProgress() async {
-    final achievements = Set<String>.from(_stats.achievements);
+  Future<List<_AchievementUnlock>> _updateStatsForRun() async {
+    final updatedAchievements = Set<String>.from(_stats.achievements);
     final unlocked = <_AchievementUnlock>[];
 
     for (final definition in _achievementDefinitions) {
-      if (_game.highestTile >= definition.requirement &&
-          !achievements.contains(definition.key)) {
-        achievements.add(definition.key);
-        unlocked.add(_AchievementUnlock(definition: definition, isNew: true));
+      final reached = _game.highestTile >= definition.requirement ||
+          _stats.bestTile >= definition.requirement;
+      if (reached) {
+        final isNew = updatedAchievements.add(definition.key);
+        unlocked.add(_AchievementUnlock(definition: definition, isNew: isNew));
       }
     }
 
@@ -499,7 +580,7 @@ class _GamePageState extends State<GamePage> {
       bestTile: _game.highestTile > _stats.bestTile
           ? _game.highestTile
           : _stats.bestTile,
-      achievements: achievements,
+      achievements: updatedAchievements,
     );
     await _persistStats();
     return unlocked;
@@ -578,7 +659,7 @@ class _GamePageState extends State<GamePage> {
                       style: TextStyle(color: Colors.white),
                     ),
                     content: const Text(
-                      '这会清空当前棋盘、最高分、统计和首次引导记录，且无法撤回。',
+                      '这会清空当前棋盘、统计、最高分、隐私同意记录与首次引导记录，且无法撤回。',
                       style: TextStyle(color: Colors.white70, height: 1.5),
                     ),
                     actions: [
@@ -603,12 +684,15 @@ class _GamePageState extends State<GamePage> {
               await widget.preferences.remove(_bestScoreKey);
               await widget.preferences.remove(_onboardingSeenKey);
               await widget.preferences.remove(_statsKey);
+              await widget.preferences.remove(_privacyConsentKey);
               _bestScore = 0;
               _stats = _PlayerStats.empty;
+              _privacyAccepted = false;
               await _restart();
               if (mounted) {
                 navigator.pop();
-                _showToast('本地进度与统计已清除');
+                _showToast('本地进度与隐私记录已清除');
+                unawaited(_runStartupFlow());
               }
             }
 
@@ -620,6 +704,22 @@ class _GamePageState extends State<GamePage> {
               }
             }
 
+            Future<void> viewPrivacy() async {
+              Navigator.of(context).pop();
+              await _openLegalPage(
+                title: '隐私政策',
+                content: LegalDocuments.privacyPolicy,
+              );
+            }
+
+            Future<void> viewTerms() async {
+              Navigator.of(context).pop();
+              await _openLegalPage(
+                title: '用户协议',
+                content: LegalDocuments.userAgreement,
+              );
+            }
+
             return _SettingsSheet(
               soundEnabled: _soundEnabled,
               hapticsEnabled: _hapticsEnabled,
@@ -627,6 +727,8 @@ class _GamePageState extends State<GamePage> {
               onHapticsChanged: updateHaptics,
               onReplayGuide: replayGuide,
               onResetProgress: resetProgress,
+              onViewPrivacy: viewPrivacy,
+              onViewTerms: viewTerms,
             );
           },
         );
@@ -747,7 +849,17 @@ class _GamePageState extends State<GamePage> {
                           ],
                         ),
                         const SizedBox(height: 16),
-                        const _FeatureStrip(),
+                        _ComplianceBanner(
+                          accepted: _privacyAccepted,
+                          onViewPrivacy: () => _openLegalPage(
+                            title: '隐私政策',
+                            content: LegalDocuments.privacyPolicy,
+                          ),
+                          onViewTerms: () => _openLegalPage(
+                            title: '用户协议',
+                            content: LegalDocuments.userAgreement,
+                          ),
+                        ),
                         const SizedBox(height: 16),
                         Wrap(
                           spacing: 12,
@@ -784,47 +896,58 @@ class _GamePageState extends State<GamePage> {
                           hapticsEnabled: _hapticsEnabled,
                         ),
                         const SizedBox(height: 16),
-                        _ShowcaseStatsPanel(stats: _stats),
+                        _FeatureHighlights(
+                          achievementsCount: _stats.achievements.length,
+                          totalGames: _stats.totalGames,
+                          privacyReady: _privacyAccepted,
+                        ),
                         const SizedBox(height: 16),
-                        _AchievementPanel(stats: _stats),
+                        _StatsOverview(stats: _stats),
+                        const SizedBox(height: 16),
+                        _AchievementsPanel(stats: _stats),
                         const SizedBox(height: 18),
-                        AspectRatio(
-                          aspectRatio: 1,
-                          child: Container(
-                            padding: const EdgeInsets.all(12),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF1A2438),
-                              borderRadius: BorderRadius.circular(24),
-                              border: Border.all(
-                                color: Colors.white.withValues(alpha: 0.05),
-                              ),
-                              boxShadow: const [
-                                BoxShadow(
-                                  color: Color(0x55000000),
-                                  blurRadius: 24,
-                                  offset: Offset(0, 16),
-                                ),
-                              ],
-                            ),
-                            child: GridView.builder(
-                              physics: const NeverScrollableScrollPhysics(),
-                              itemCount: _game.size * _game.size,
-                              gridDelegate:
-                                  SliverGridDelegateWithFixedCrossAxisCount(
-                                    crossAxisCount: _game.size,
-                                    mainAxisSpacing: 10,
-                                    crossAxisSpacing: 10,
+                        SizedBox(
+                          height: 460,
+                          child: Center(
+                            child: AspectRatio(
+                              aspectRatio: 1,
+                              child: Container(
+                                padding: const EdgeInsets.all(12),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF1A2438),
+                                  borderRadius: BorderRadius.circular(24),
+                                  border: Border.all(
+                                    color: Colors.white.withValues(alpha: 0.05),
                                   ),
-                              itemBuilder: (context, index) {
-                                final row = index ~/ _game.size;
-                                final column = index % _game.size;
-                                final value = _game.board[row][column];
-                                return _TileCell(
-                                  key: ValueKey(index),
-                                  value: value,
-                                  animation: _tileAnimations[index],
-                                );
-                              },
+                                  boxShadow: const [
+                                    BoxShadow(
+                                      color: Color(0x55000000),
+                                      blurRadius: 24,
+                                      offset: Offset(0, 16),
+                                    ),
+                                  ],
+                                ),
+                                child: GridView.builder(
+                                  physics: const NeverScrollableScrollPhysics(),
+                                  itemCount: _game.size * _game.size,
+                                  gridDelegate:
+                                      SliverGridDelegateWithFixedCrossAxisCount(
+                                        crossAxisCount: _game.size,
+                                        mainAxisSpacing: 10,
+                                        crossAxisSpacing: 10,
+                                      ),
+                                  itemBuilder: (context, index) {
+                                    final row = index ~/ _game.size;
+                                    final column = index % _game.size;
+                                    final value = _game.board[row][column];
+                                    return _TileCell(
+                                      key: ValueKey(index),
+                                      value: value,
+                                      animation: _tileAnimations[index],
+                                    );
+                                  },
+                                ),
+                              ),
                             ),
                           ),
                         ),
@@ -844,7 +967,10 @@ class _GamePageState extends State<GamePage> {
 }
 
 class _TitlePanel extends StatelessWidget {
-  const _TitlePanel({required this.bestScore, required this.totalGames});
+  const _TitlePanel({
+    required this.bestScore,
+    required this.totalGames,
+  });
 
   final int bestScore;
   final int totalGames;
@@ -861,19 +987,19 @@ class _TitlePanel extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
+          const Row(
             children: [
-              const _BrandBadge(),
-              const SizedBox(width: 12),
+              _BrandBadge(),
+              SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
-                  children: const [
+                  children: [
                     Text(
                       _GameBrand.appName,
                       style: TextStyle(
                         color: Colors.white,
-                        fontSize: 32,
+                        fontSize: 30,
                         fontWeight: FontWeight.w900,
                         letterSpacing: 0.5,
                       ),
@@ -890,26 +1016,90 @@ class _TitlePanel extends StatelessWidget {
           ),
           const SizedBox(height: 10),
           const Text(
-            _GameBrand.storeHeadline,
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 16,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-          const SizedBox(height: 6),
-          const Text(
-            '离线可玩、自动存档、带音效反馈与成就展示，适合作为可上架展示的休闲益智样板。',
+            _GameBrand.tagline,
             style: TextStyle(color: Colors.white70, fontSize: 14, height: 1.5),
           ),
           const SizedBox(height: 14),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              _TagChip(label: 'Best $bestScore', color: const Color(0xFFF59E0B)),
+              _TagChip(label: '$totalGames 局记录', color: const Color(0xFF38BDF8)),
+              _TagChip(label: 'Privacy Ready', color: const Color(0xFF34D399)),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ComplianceBanner extends StatelessWidget {
+  const _ComplianceBanner({
+    required this.accepted,
+    required this.onViewPrivacy,
+    required this.onViewTerms,
+  });
+
+  final bool accepted;
+  final VoidCallback onViewPrivacy;
+  final VoidCallback onViewTerms;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFF131D31),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: accepted
+              ? const Color(0xFF34D399).withValues(alpha: 0.35)
+              : const Color(0xFFF59E0B).withValues(alpha: 0.35),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
           Row(
             children: [
-              _HeadlineChip(icon: Icons.star_rounded, label: '最佳分 $bestScore'),
-              const SizedBox(width: 8),
-              _HeadlineChip(
-                icon: Icons.sports_esports_rounded,
-                label: '已开局 $totalGames 次',
+              Icon(
+                accepted ? Icons.verified_user_rounded : Icons.privacy_tip_rounded,
+                color: accepted ? const Color(0xFF34D399) : const Color(0xFFF59E0B),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  accepted ? '隐私合规已接入' : '首次启动隐私合规已启用',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 16,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          const Text(
+            '当前版本已支持首次启动隐私政策/用户协议确认，并在设置内提供持续可访问入口。',
+            style: TextStyle(color: Colors.white70, height: 1.5),
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              OutlinedButton.icon(
+                onPressed: onViewPrivacy,
+                icon: const Icon(Icons.shield_outlined),
+                label: const Text('查看隐私政策'),
+              ),
+              OutlinedButton.icon(
+                onPressed: onViewTerms,
+                icon: const Icon(Icons.description_outlined),
+                label: const Text('查看用户协议'),
               ),
             ],
           ),
@@ -919,32 +1109,193 @@ class _TitlePanel extends StatelessWidget {
   }
 }
 
-class _HeadlineChip extends StatelessWidget {
-  const _HeadlineChip({required this.icon, required this.label});
+class _FeatureHighlights extends StatelessWidget {
+  const _FeatureHighlights({
+    required this.achievementsCount,
+    required this.totalGames,
+    required this.privacyReady,
+  });
+
+  final int achievementsCount;
+  final int totalGames;
+  final bool privacyReady;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(
+          child: _HighlightCard(
+            icon: Icons.offline_bolt_rounded,
+            title: '离线游玩',
+            subtitle: '无需登录，随开随玩',
+            accent: const Color(0xFFF59E0B),
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: _HighlightCard(
+            icon: Icons.emoji_events_outlined,
+            title: '$achievementsCount 项成就',
+            subtitle: '累计 $totalGames 局游戏记录',
+            accent: const Color(0xFF38BDF8),
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: _HighlightCard(
+            icon: Icons.verified_user_outlined,
+            title: privacyReady ? '合规弹窗已接入' : '待完成合规接入',
+            subtitle: '隐私政策与协议可访问',
+            accent: const Color(0xFF34D399),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _HighlightCard extends StatelessWidget {
+  const _HighlightCard({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.accent,
+  });
 
   final IconData icon;
-  final String label;
+  final String title;
+  final String subtitle;
+  final Color accent;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.06),
-        borderRadius: BorderRadius.circular(999),
+        color: const Color(0xFF131D31),
+        borderRadius: BorderRadius.circular(20),
       ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, size: 16, color: const Color(0xFFF59E0B)),
-          const SizedBox(width: 6),
+          Icon(icon, color: accent),
+          const SizedBox(height: 10),
           Text(
-            label,
+            title,
             style: const TextStyle(
               color: Colors.white,
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
+              fontWeight: FontWeight.w800,
             ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            subtitle,
+            style: const TextStyle(color: Colors.white70, height: 1.45),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _StatsOverview extends StatelessWidget {
+  const _StatsOverview({required this.stats});
+
+  final _PlayerStats stats;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: const Color(0xFF131D31),
+        borderRadius: BorderRadius.circular(22),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            '玩家统计',
+            style: TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w900,
+              fontSize: 18,
+            ),
+          ),
+          const SizedBox(height: 14),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              _MetricChip(
+                icon: Icons.sports_esports_rounded,
+                label: '总局数',
+                value: '${stats.totalGames}',
+              ),
+              _MetricChip(
+                icon: Icons.swipe_rounded,
+                label: '总步数',
+                value: '${stats.totalMoves}',
+              ),
+              _MetricChip(
+                icon: Icons.star_rounded,
+                label: '累计得分',
+                value: '${stats.totalScore}',
+              ),
+              _MetricChip(
+                icon: Icons.grid_4x4_rounded,
+                label: '历史最大方块',
+                value: '${stats.bestTile}',
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AchievementsPanel extends StatelessWidget {
+  const _AchievementsPanel({required this.stats});
+
+  final _PlayerStats stats;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: const Color(0xFF131D31),
+        borderRadius: BorderRadius.circular(22),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            '成就展示',
+            style: TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w900,
+              fontSize: 18,
+            ),
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            '解锁不同里程碑，持续挑战更高数字。',
+            style: TextStyle(color: Colors.white70, height: 1.5),
+          ),
+          const SizedBox(height: 14),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: _achievementDefinitions.map((definition) {
+              final unlocked = stats.achievements.contains(definition.key);
+              return _AchievementBadge(
+                definition: definition,
+                unlocked: unlocked,
+              );
+            }).toList(),
           ),
         ],
       ),
@@ -989,81 +1340,26 @@ class _BrandBadge extends StatelessWidget {
   }
 }
 
-class _FeatureStrip extends StatelessWidget {
-  const _FeatureStrip();
+class _TagChip extends StatelessWidget {
+  const _TagChip({required this.label, required this.color});
 
-  @override
-  Widget build(BuildContext context) {
-    return Wrap(
-      spacing: 10,
-      runSpacing: 10,
-      children: const [
-        _FeatureCard(
-          icon: Icons.offline_bolt_rounded,
-          title: '离线单机',
-          subtitle: '无需账号与服务端',
-        ),
-        _FeatureCard(
-          icon: Icons.auto_awesome_rounded,
-          title: '音效动画',
-          subtitle: '反馈更像正式产品',
-        ),
-        _FeatureCard(
-          icon: Icons.emoji_events_rounded,
-          title: '成就展示',
-          subtitle: '可用于商店演示',
-        ),
-      ],
-    );
-  }
-}
-
-class _FeatureCard extends StatelessWidget {
-  const _FeatureCard({
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-  });
-
-  final IconData icon;
-  final String title;
-  final String subtitle;
+  final String label;
+  final Color color;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: 182,
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
-        color: const Color(0xFF131D31),
-        borderRadius: BorderRadius.circular(20),
+        color: color.withValues(alpha: 0.16),
+        borderRadius: BorderRadius.circular(999),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: 42,
-            height: 42,
-            decoration: BoxDecoration(
-              color: const Color(0xFFF59E0B).withValues(alpha: 0.18),
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: Icon(icon, color: const Color(0xFFF59E0B)),
-          ),
-          const SizedBox(height: 10),
-          Text(
-            title,
-            style: const TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            subtitle,
-            style: const TextStyle(color: Colors.white70, height: 1.4),
-          ),
-        ],
+      child: Text(
+        label,
+        style: const TextStyle(
+          color: Colors.white,
+          fontWeight: FontWeight.w700,
+        ),
       ),
     );
   }
@@ -1197,23 +1493,12 @@ class _InfoBanner extends StatelessWidget {
       ),
       child: Row(
         children: [
+          Expanded(child: _BannerStat(title: '状态', value: statusLabel)),
+          Expanded(child: _BannerStat(title: '本次得分', value: gainText)),
+          Expanded(child: _BannerStat(title: '撤销', value: canUndo ? '可用' : '未准备')),
+          Expanded(child: _BannerStat(title: '音效', value: soundEnabled ? '开启' : '关闭')),
           Expanded(
-            child: _BannerStat(title: '状态', value: statusLabel),
-          ),
-          Expanded(
-            child: _BannerStat(title: '本次得分', value: gainText),
-          ),
-          Expanded(
-            child: _BannerStat(title: '撤销', value: canUndo ? '可用' : '未准备'),
-          ),
-          Expanded(
-            child: _BannerStat(title: '音效', value: soundEnabled ? '开启' : '关闭'),
-          ),
-          Expanded(
-            child: _BannerStat(
-              title: '震动',
-              value: hapticsEnabled ? '开启' : '关闭',
-            ),
+            child: _BannerStat(title: '震动', value: hapticsEnabled ? '开启' : '关闭'),
           ),
         ],
       ),
@@ -1266,196 +1551,39 @@ class _BannerStat extends StatelessWidget {
   }
 }
 
-class _ShowcaseStatsPanel extends StatelessWidget {
-  const _ShowcaseStatsPanel({required this.stats});
-
-  final _PlayerStats stats;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: const Color(0xFF131D31),
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            '玩家统计',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 18,
-              fontWeight: FontWeight.w900,
-            ),
-          ),
-          const SizedBox(height: 6),
-          const Text(
-            '这些数据会本地保存，用于展示产品完成度。',
-            style: TextStyle(color: Colors.white70, height: 1.45),
-          ),
-          const SizedBox(height: 14),
-          Wrap(
-            spacing: 10,
-            runSpacing: 10,
-            children: [
-              _MetricChip(
-                icon: Icons.sports_esports_rounded,
-                label: '累计局数',
-                value: '${stats.totalGames}',
-              ),
-              _MetricChip(
-                icon: Icons.swipe_rounded,
-                label: '累计步数',
-                value: '${stats.totalMoves}',
-              ),
-              _MetricChip(
-                icon: Icons.leaderboard_rounded,
-                label: '累计分数',
-                value: '${stats.totalScore}',
-              ),
-              _MetricChip(
-                icon: Icons.auto_graph_rounded,
-                label: '历史最大方块',
-                value: '${stats.bestTile}',
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _MetricChip extends StatelessWidget {
-  const _MetricChip({
-    required this.icon,
-    required this.label,
-    required this.value,
-  });
-
-  final IconData icon;
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: 134,
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: const Color(0xFF1A2438),
-        borderRadius: BorderRadius.circular(18),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(icon, color: const Color(0xFFF59E0B), size: 18),
-          const SizedBox(height: 8),
-          Text(
-            label,
-            style: const TextStyle(color: Colors.white54, fontSize: 12),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            value,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 18,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _AchievementPanel extends StatelessWidget {
-  const _AchievementPanel({required this.stats});
-
-  final _PlayerStats stats;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: const Color(0xFF131D31),
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            '成就展示',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 18,
-              fontWeight: FontWeight.w900,
-            ),
-          ),
-          const SizedBox(height: 6),
-          const Text(
-            '适合在演示版里展示玩家成长与本地留存能力。',
-            style: TextStyle(color: Colors.white70, height: 1.45),
-          ),
-          const SizedBox(height: 14),
-          Wrap(
-            spacing: 10,
-            runSpacing: 10,
-            children: _achievementDefinitions.map((definition) {
-              final unlocked = stats.achievements.contains(definition.key);
-              return _AchievementBadge(
-                definition: definition,
-                unlocked: unlocked,
-              );
-            }).toList(),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 class _AchievementBadge extends StatelessWidget {
-  const _AchievementBadge({required this.definition, required this.unlocked});
+  const _AchievementBadge({
+    required this.definition,
+    required this.unlocked,
+  });
 
   final _AchievementDefinition definition;
   final bool unlocked;
 
   @override
   Widget build(BuildContext context) {
-    final accent = unlocked
-        ? const Color(0xFFF59E0B)
-        : Colors.white.withValues(alpha: 0.18);
+    final accent = unlocked ? const Color(0xFFF59E0B) : Colors.white24;
     return Container(
-      width: 118,
+      width: 128,
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: const Color(0xFF1A2438),
+        color: unlocked
+            ? const Color(0xFFF59E0B).withValues(alpha: 0.16)
+            : const Color(0xFF1A2438),
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: accent),
+        border: Border.all(color: accent.withValues(alpha: 0.35)),
       ),
       child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(definition.icon, color: accent, size: 22),
+          Icon(definition.icon, color: accent),
           const SizedBox(height: 8),
           Text(
             definition.label,
             textAlign: TextAlign.center,
             style: TextStyle(
-              color: unlocked ? Colors.white : Colors.white54,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            unlocked ? '已解锁' : '未解锁',
-            style: TextStyle(
-              color: unlocked ? const Color(0xFFFDE68A) : Colors.white38,
-              fontSize: 12,
+              color: unlocked ? Colors.white : Colors.white70,
+              fontWeight: FontWeight.w800,
             ),
           ),
         ],
@@ -1497,8 +1625,7 @@ class _TileCellState extends State<_TileCell>
   @override
   void didUpdateWidget(covariant _TileCell oldWidget) {
     super.didUpdateWidget(oldWidget);
-    final changedAnimation =
-        widget.animation?.tick != oldWidget.animation?.tick;
+    final changedAnimation = widget.animation?.tick != oldWidget.animation?.tick;
     final changedValue = widget.value != oldWidget.value;
     if (changedAnimation || changedValue) {
       _configureAnimation();
@@ -1552,9 +1679,9 @@ class _TileCellState extends State<_TileCell>
                   ? null
                   : [
                       BoxShadow(
-                        color: _tileGradient(
-                          widget.value,
-                        ).last.withValues(alpha: 0.22 + glowBoost),
+                        color: _tileGradient(widget.value)
+                            .last
+                            .withValues(alpha: 0.22 + glowBoost),
                         blurRadius: 12 + 14 * glowBoost,
                         offset: const Offset(0, 8),
                       ),
@@ -1699,6 +1826,8 @@ class _SettingsSheet extends StatelessWidget {
     required this.onHapticsChanged,
     required this.onReplayGuide,
     required this.onResetProgress,
+    required this.onViewPrivacy,
+    required this.onViewTerms,
   });
 
   final bool soundEnabled;
@@ -1707,6 +1836,8 @@ class _SettingsSheet extends StatelessWidget {
   final Future<void> Function(bool value) onHapticsChanged;
   final Future<void> Function() onReplayGuide;
   final Future<void> Function() onResetProgress;
+  final Future<void> Function() onViewPrivacy;
+  final Future<void> Function() onViewTerms;
 
   @override
   Widget build(BuildContext context) {
@@ -1746,7 +1877,7 @@ class _SettingsSheet extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           const Text(
-            '调整你的游玩体验，或管理本地数据。',
+            '调整你的游玩体验，查看协议文档，或管理本地数据。',
             style: TextStyle(color: Colors.white70, height: 1.5),
           ),
           const SizedBox(height: 20),
@@ -1765,6 +1896,20 @@ class _SettingsSheet extends StatelessWidget {
           ),
           const SizedBox(height: 18),
           _SettingsActionTile(
+            icon: Icons.privacy_tip_outlined,
+            title: '查看隐私政策',
+            subtitle: '阅读应用的数据存储、使用与删除说明',
+            onTap: () => unawaited(onViewPrivacy()),
+          ),
+          const SizedBox(height: 10),
+          _SettingsActionTile(
+            icon: Icons.description_outlined,
+            title: '查看用户协议',
+            subtitle: '查看应用使用规则与责任说明',
+            onTap: () => unawaited(onViewTerms()),
+          ),
+          const SizedBox(height: 10),
+          _SettingsActionTile(
             icon: Icons.auto_awesome_rounded,
             title: '重新查看新手引导',
             subtitle: '再次查看玩法说明与操作提示',
@@ -1774,7 +1919,7 @@ class _SettingsSheet extends StatelessWidget {
           _SettingsActionTile(
             icon: Icons.delete_outline_rounded,
             title: '清除本地进度',
-            subtitle: '删除当前棋盘、统计、最高分与引导记录',
+            subtitle: '删除当前棋盘、统计、最高分与隐私同意记录',
             destructive: true,
             onTap: () => unawaited(onResetProgress()),
           ),
@@ -2085,6 +2230,53 @@ class _ResultSheet extends StatelessWidget {
   }
 }
 
+class _MetricChip extends StatelessWidget {
+  const _MetricChip({
+    required this.icon,
+    required this.label,
+    required this.value,
+  });
+
+  final IconData icon;
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF131D31),
+        borderRadius: BorderRadius.circular(18),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: const Color(0xFFF59E0B), size: 18),
+          const SizedBox(width: 8),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: const TextStyle(color: Colors.white54, fontSize: 11),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                value,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _OnboardingSheet extends StatelessWidget {
   const _OnboardingSheet();
 
@@ -2245,6 +2437,101 @@ class _GuideItem extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _PrivacyConsentDialog extends StatelessWidget {
+  const _PrivacyConsentDialog({
+    required this.onViewPrivacy,
+    required this.onViewTerms,
+  });
+
+  final VoidCallback onViewPrivacy;
+  final VoidCallback onViewTerms;
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: const Color(0xFF172033),
+      title: const Text(
+        '隐私政策与用户协议',
+        style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900),
+      ),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            '欢迎使用 2048 Solo。为保障你的个人信息与合法权益，请在使用前认真阅读《隐私政策》和《用户协议》。',
+            style: TextStyle(color: Colors.white70, height: 1.6),
+          ),
+          const SizedBox(height: 14),
+          const Text(
+            '同意后，你可以继续使用应用；不同意则应用将退出。',
+            style: TextStyle(color: Colors.white54, height: 1.5),
+          ),
+          const SizedBox(height: 18),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              OutlinedButton(
+                onPressed: onViewPrivacy,
+                child: const Text('查看隐私政策'),
+              ),
+              OutlinedButton(
+                onPressed: onViewTerms,
+                child: const Text('查看用户协议'),
+              ),
+            ],
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(false),
+          child: const Text('不同意并退出'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.of(context).pop(true),
+          child: const Text('同意并继续'),
+        ),
+      ],
+    );
+  }
+}
+
+class _LegalDocumentPage extends StatelessWidget {
+  const _LegalDocumentPage({
+    required this.title,
+    required this.content,
+  });
+
+  final String title;
+  final String content;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(title),
+        backgroundColor: Colors.transparent,
+        foregroundColor: Colors.white,
+      ),
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(20),
+          child: SelectableText(
+            content,
+            style: const TextStyle(
+              color: Colors.white70,
+              fontSize: 14,
+              height: 1.7,
+            ),
+          ),
+        ),
       ),
     );
   }
