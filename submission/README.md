@@ -18,8 +18,9 @@
 1. `china-android-market-submission-pack.md`
 2. `china-android-compliance-checklist.md`
 3. `china-android-game-licensing-notes.md`
-4. `china-android-review-notes-template.md`
-5. `current-gap-analysis-cn.md`
+4. `china-android-signing-and-release.md`
+5. `china-android-review-notes-template.md`
+6. `current-gap-analysis-cn.md`
 
 ---
 
