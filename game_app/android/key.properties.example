@@ -1,0 +1,13 @@
+## Copy this file to android/key.properties and replace values
+## with your real signing information before building a formal release.
+##
+## The build also supports these environment variables:
+## ANDROID_KEYSTORE_PATH
+## ANDROID_KEYSTORE_PASSWORD
+## ANDROID_KEY_ALIAS
+## ANDROID_KEY_PASSWORD
+
+storeFile=keystore/2048-solo-release.jks
+storePassword=replace-with-your-store-password
+keyAlias=replace-with-your-key-alias
+keyPassword=replace-with-your-key-password
