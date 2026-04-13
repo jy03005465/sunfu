@@ -51,7 +51,6 @@ class _GameBrand {
   static const appName = '2048 Solo';
   static const tagline = '离线也能玩的数字合成小游戏';
   static const version = 'Build 1.4 Privacy';
-  static const storeHeadline = '更像商店成品的单机益智体验';
 }
 
 class _AchievementDefinition {
@@ -336,7 +335,10 @@ class _GamePageState extends State<GamePage> {
         builder: (context) {
           return AlertDialog(
             backgroundColor: const Color(0xFF172033),
-            title: const Text('需要同意后才能继续', style: TextStyle(color: Colors.white)),
+            title: const Text(
+              '需要同意后才能继续',
+              style: TextStyle(color: Colors.white),
+            ),
             content: const Text(
               '若不同意隐私政策与用户协议，应用将无法继续提供服务。',
               style: TextStyle(color: Colors.white70, height: 1.5),
@@ -356,14 +358,15 @@ class _GamePageState extends State<GamePage> {
 
   Future<void> _openLegalPage({
     required String title,
-    required String content,
+    required LegalDocumentContent content,
   }) async {
     if (!mounted) {
       return;
     }
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (context) => _LegalDocumentPage(title: title, content: content),
+        builder: (context) =>
+            _LegalDocumentPage(title: title, content: content),
       ),
     );
   }
@@ -568,7 +571,8 @@ class _GamePageState extends State<GamePage> {
     final unlocked = <_AchievementUnlock>[];
 
     for (final definition in _achievementDefinitions) {
-      final reached = _game.highestTile >= definition.requirement ||
+      final reached =
+          _game.highestTile >= definition.requirement ||
           _stats.bestTile >= definition.requirement;
       if (reached) {
         final isNew = updatedAchievements.add(definition.key);
@@ -967,10 +971,7 @@ class _GamePageState extends State<GamePage> {
 }
 
 class _TitlePanel extends StatelessWidget {
-  const _TitlePanel({
-    required this.bestScore,
-    required this.totalGames,
-  });
+  const _TitlePanel({required this.bestScore, required this.totalGames});
 
   final int bestScore;
   final int totalGames;
@@ -1024,8 +1025,14 @@ class _TitlePanel extends StatelessWidget {
             spacing: 10,
             runSpacing: 10,
             children: [
-              _TagChip(label: 'Best $bestScore', color: const Color(0xFFF59E0B)),
-              _TagChip(label: '$totalGames 局记录', color: const Color(0xFF38BDF8)),
+              _TagChip(
+                label: 'Best $bestScore',
+                color: const Color(0xFFF59E0B),
+              ),
+              _TagChip(
+                label: '$totalGames 局记录',
+                color: const Color(0xFF38BDF8),
+              ),
               _TagChip(label: 'Privacy Ready', color: const Color(0xFF34D399)),
             ],
           ),
@@ -1065,8 +1072,12 @@ class _ComplianceBanner extends StatelessWidget {
           Row(
             children: [
               Icon(
-                accepted ? Icons.verified_user_rounded : Icons.privacy_tip_rounded,
-                color: accepted ? const Color(0xFF34D399) : const Color(0xFFF59E0B),
+                accepted
+                    ? Icons.verified_user_rounded
+                    : Icons.privacy_tip_rounded,
+                color: accepted
+                    ? const Color(0xFF34D399)
+                    : const Color(0xFFF59E0B),
               ),
               const SizedBox(width: 10),
               Expanded(
@@ -1493,12 +1504,23 @@ class _InfoBanner extends StatelessWidget {
       ),
       child: Row(
         children: [
-          Expanded(child: _BannerStat(title: '状态', value: statusLabel)),
-          Expanded(child: _BannerStat(title: '本次得分', value: gainText)),
-          Expanded(child: _BannerStat(title: '撤销', value: canUndo ? '可用' : '未准备')),
-          Expanded(child: _BannerStat(title: '音效', value: soundEnabled ? '开启' : '关闭')),
           Expanded(
-            child: _BannerStat(title: '震动', value: hapticsEnabled ? '开启' : '关闭'),
+            child: _BannerStat(title: '状态', value: statusLabel),
+          ),
+          Expanded(
+            child: _BannerStat(title: '本次得分', value: gainText),
+          ),
+          Expanded(
+            child: _BannerStat(title: '撤销', value: canUndo ? '可用' : '未准备'),
+          ),
+          Expanded(
+            child: _BannerStat(title: '音效', value: soundEnabled ? '开启' : '关闭'),
+          ),
+          Expanded(
+            child: _BannerStat(
+              title: '震动',
+              value: hapticsEnabled ? '开启' : '关闭',
+            ),
           ),
         ],
       ),
@@ -1552,10 +1574,7 @@ class _BannerStat extends StatelessWidget {
 }
 
 class _AchievementBadge extends StatelessWidget {
-  const _AchievementBadge({
-    required this.definition,
-    required this.unlocked,
-  });
+  const _AchievementBadge({required this.definition, required this.unlocked});
 
   final _AchievementDefinition definition;
   final bool unlocked;
@@ -1625,7 +1644,8 @@ class _TileCellState extends State<_TileCell>
   @override
   void didUpdateWidget(covariant _TileCell oldWidget) {
     super.didUpdateWidget(oldWidget);
-    final changedAnimation = widget.animation?.tick != oldWidget.animation?.tick;
+    final changedAnimation =
+        widget.animation?.tick != oldWidget.animation?.tick;
     final changedValue = widget.value != oldWidget.value;
     if (changedAnimation || changedValue) {
       _configureAnimation();
@@ -1679,9 +1699,9 @@ class _TileCellState extends State<_TileCell>
                   ? null
                   : [
                       BoxShadow(
-                        color: _tileGradient(widget.value)
-                            .last
-                            .withValues(alpha: 0.22 + glowBoost),
+                        color: _tileGradient(
+                          widget.value,
+                        ).last.withValues(alpha: 0.22 + glowBoost),
                         blurRadius: 12 + 14 * glowBoost,
                         offset: const Offset(0, 8),
                       ),
@@ -2504,13 +2524,10 @@ class _PrivacyConsentDialog extends StatelessWidget {
 }
 
 class _LegalDocumentPage extends StatelessWidget {
-  const _LegalDocumentPage({
-    required this.title,
-    required this.content,
-  });
+  const _LegalDocumentPage({required this.title, required this.content});
 
   final String title;
-  final String content;
+  final LegalDocumentContent content;
 
   @override
   Widget build(BuildContext context) {
@@ -2523,13 +2540,85 @@ class _LegalDocumentPage extends StatelessWidget {
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(20),
-          child: SelectableText(
-            content,
-            style: const TextStyle(
-              color: Colors.white70,
-              fontSize: 14,
-              height: 1.7,
-            ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                content.summary,
+                style: const TextStyle(
+                  color: Colors.white70,
+                  fontSize: 14,
+                  height: 1.7,
+                ),
+              ),
+              const SizedBox(height: 18),
+              for (final section in content.sections) ...[
+                Text(
+                  section.title,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  section.body,
+                  style: const TextStyle(
+                    color: Colors.white70,
+                    fontSize: 14,
+                    height: 1.7,
+                  ),
+                ),
+                if (section.bullets.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  for (final bullet in section.bullets)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Padding(
+                            padding: EdgeInsets.only(top: 7),
+                            child: Icon(
+                              Icons.circle,
+                              size: 8,
+                              color: Color(0xFFF59E0B),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              bullet,
+                              style: const TextStyle(
+                                color: Colors.white70,
+                                fontSize: 14,
+                                height: 1.6,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
+                const SizedBox(height: 18),
+              ],
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF131D31),
+                  borderRadius: BorderRadius.circular(18),
+                ),
+                child: Text(
+                  content.footer,
+                  style: const TextStyle(
+                    color: Colors.white60,
+                    fontSize: 13,
+                    height: 1.6,
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
       ),
